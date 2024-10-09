@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.jowhjy.smp_atlas.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "CartographyTableScreenHandlerMixin",
+    "ChiseledBookshelfBlockEntityMixin",
+    "IChiseledBookshelfBlockEntityAccessor",
+    "MapStateMixin",
+    "StrongholdGeneratorLibraryMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
