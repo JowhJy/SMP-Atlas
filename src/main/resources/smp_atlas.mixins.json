@@ -8,7 +8,8 @@
     "ChiseledBookshelfBlockEntityMixin",
     "IChiseledBookshelfBlockEntityAccessor",
     "MapStateMixin",
-    "StrongholdGeneratorLibraryMixin"
+    "StrongholdGeneratorLibraryMixin",
+    "StructurePieceMixin"
   ],
   "injectors": {
     "defaultRequire": 1

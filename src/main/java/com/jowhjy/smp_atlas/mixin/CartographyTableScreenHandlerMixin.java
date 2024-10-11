@@ -100,26 +100,18 @@ public class CartographyTableScreenHandlerMixin {
 
             ItemStack itemStack4 = null;
 
-            if (item.isOf(Items.MAP)) {
+            if (item.isOf(Items.MAP) && MapAtlasItem.canAddEmpty(map)) {
                 itemStack4 = map.copyWithCount(1);
                 itemStack4.remove(DataComponentTypes.MAP_ID);
                 itemStack4.set(DataComponentTypes.MAP_POST_PROCESSING, MapPostProcessingComponent.SCALE);
                 thisCTSH.sendContentUpdates();
             }
             else if (item.isOf(Items.FILLED_MAP)) {
-
-                MapState mapState = FilledMapItem.getMapState(item, world);
-                NbtCompound atlasInfo = MapAtlasItem.getAtlasInfo(map);
-
-                if (mapState != null && (atlasInfo.getByte("scale") == -1 || mapState.scale == atlasInfo.getByte("scale"))) {
+                if (MapAtlasItem.canAdd(map, item, world)) {
                     MapIdComponent mapIdComponent = item.get(DataComponentTypes.MAP_ID);
-                    List<Integer> mapIDs = new ArrayList<>(Arrays.stream(atlasInfo.getIntArray("map_ids")).boxed().toList());
-                    if (mapIdComponent != null && !mapIDs.contains(mapIdComponent.id())) {
-
-                        itemStack4 = map.copyWithCount(1);
-                        itemStack4.set(DataComponentTypes.MAP_ID, mapIdComponent);
-                        thisCTSH.sendContentUpdates();
-                    }
+                    itemStack4 = map.copyWithCount(1);
+                    itemStack4.set(DataComponentTypes.MAP_ID, mapIdComponent);
+                    thisCTSH.sendContentUpdates();
                 }
             }
             if (itemStack4 == null) {

@@ -4,12 +4,13 @@ import com.jowhjy.smp_atlas.MapStateHelper;
 import com.mojang.serialization.Dynamic;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
+import eu.pb4.polymer.resourcepack.api.PolymerModelData;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.MapIdComponent;
-import net.minecraft.component.type.MapPostProcessingComponent;
-import net.minecraft.component.type.NbtComponent;
+import net.minecraft.component.type.*;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.inventory.StackReference;
 import net.minecraft.item.*;
 import net.minecraft.item.map.MapState;
 import net.minecraft.item.tooltip.TooltipType;
@@ -17,14 +18,13 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.registry.RegistryWrapper;
+import net.minecraft.screen.slot.Slot;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Pair;
-import net.minecraft.util.Rarity;
+import net.minecraft.util.*;
 import net.minecraft.world.World;
 import net.minecraft.world.dimension.DimensionType;
 import org.jetbrains.annotations.Nullable;
@@ -34,7 +34,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
-    Optional<Pair<MapState, MapIdComponent>> currentMap = Optional.empty();
+    private static final int MAX_MAPS = 64;
+    private static final PolymerModelData MODEL_DATA = PolymerResourcePackUtils.requestModel(Items.FILLED_MAP, Identifier.of("smp_atlas","item/map_atlas"));
+
+    //TODO: needs to be per item
+    //Optional<Pair<MapState, MapIdComponent>> currentMap = Optional.empty();
 
     public MapAtlasItem() {
         super(new Settings().maxCount(1).rarity(Rarity.UNCOMMON));
@@ -49,24 +53,31 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
     public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipType context, RegistryWrapper.WrapperLookup lookup, ServerPlayerEntity player) {
         ItemStack out = PolymerItemUtils.createItemStack(itemStack, context, lookup, player);
         itemStack.copyComponentsToNewStack(out.getItem(), itemStack.getCount());
-        currentMap.ifPresent(pair ->
-        {
-            out.set(DataComponentTypes.MAP_ID, pair.getRight());
-        });
+        out.set(DataComponentTypes.MAP_ID, new MapIdComponent(getCurrentMapId(itemStack)));
         out.set(DataComponentTypes.ITEM_NAME, (Text.literal("Map Atlas").setStyle((Style.EMPTY).withItalic(false))));
+        out.set(DataComponentTypes.CUSTOM_MODEL_DATA, MODEL_DATA.asComponent());
+        List<Text> tooltip = new ArrayList<>();
+        appendTooltip(itemStack, null, tooltip, TooltipType.ADVANCED);
+        out.set(DataComponentTypes.LORE, new LoreComponent(tooltip));
         return out;
     }
 
     @Nullable
     @Override
     public Packet<?> createSyncPacket(ItemStack stack, World world, PlayerEntity player) {
-        return currentMap.<Packet<?>>map(pair -> pair.getLeft().getPlayerMarkerPacket(pair.getRight(), player)).orElse(null);
+        int mapID = getCurrentMapId(stack);
+        if (mapID == -1) return null;
+        return getCurrentMapState(stack, world).getPlayerMarkerPacket(new MapIdComponent(getCurrentMapId(stack)), player);
     }
 
     public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
     {
+        //TODO: we can possibly check this for an unknown map too by storing the "map region" a player is in
+        if (getCurrentMapId(stack) != -1 && MapStateHelper.mapStateContainsPlayer(getCurrentMapState(stack, player.getWorld()), player)) return Optional.of(new Pair<>(getCurrentMapState(stack, player.getWorld()),stack.get(DataComponentTypes.MAP_ID)));
+
         //TODO: optimize for loop
         int[] mapIDs = getAtlasInfo(stack).getIntArray("map_ids");
+
 
         for (int map_id : mapIDs)
         {
@@ -81,11 +92,11 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
     @Override
     public void inventoryTick(ItemStack stack, World world, Entity entity, int slot, boolean selected)
     {
-        //todo: optimize by just checking if player is in curr map still
+        //todo: optimize further by storing the maps in a sensible way?
         if (entity instanceof ServerPlayerEntity player && (selected || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
             var prevMapID = stack.get(DataComponentTypes.MAP_ID);
-            currentMap = getMapWithPlayer(player, stack);
+            Optional<Pair<MapState, MapIdComponent>> currentMap = getMapWithPlayer(player, stack);
 
 
 
@@ -117,9 +128,8 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
             setEmptyMaps(stack,emptyMaps - 1);
             ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
             this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), stack, getScale(stack));
-            currentMap = getMapWithPlayer(entity, stack);
-
         }
+        else stack.remove(DataComponentTypes.MAP_ID);
     }
 
     public static NbtCompound getAtlasInfo(ItemStack stack)
@@ -150,7 +160,7 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
 
         stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("map_ids", mapIDs.stream().toList())));
 
-        this.currentMap = Optional.empty();
+        stack.remove(DataComponentTypes.MAP_ID);
 
     }
 
@@ -162,12 +172,88 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
         if (mapIdComponent != null) {
             MapState state = FilledMapItem.getMapState(mapIdComponent, world);
             if (state != null) ((MapAtlasItem) stack.getItem()).tryAddMap(mapIdComponent, stack, state.scale);
-            this.currentMap = Optional.empty();
+            stack.remove(DataComponentTypes.MAP_ID);
         }
         if (mapPostProcessingComponent == MapPostProcessingComponent.SCALE)
         {
             ((MapAtlasItem) stack.getItem()).addEmptyMap(stack);
         }
+    }
+
+    @Override
+    public boolean onClicked(ItemStack stack, ItemStack otherStack, Slot slot, ClickType clickType, PlayerEntity player, StackReference cursorStackReference) {
+        if (clickType == ClickType.RIGHT && slot.canTakePartial(player)) {
+            NbtComponent customDataComponent = stack.get(DataComponentTypes.CUSTOM_DATA);
+            if (customDataComponent == null) {
+                return false;
+
+            } else {
+                if (otherStack.isEmpty()) {
+                    ItemStack itemStack = removeCurrentMap(stack);
+                    if (itemStack != null) {
+                        this.playRemoveOneSound(player);
+                        cursorStackReference.set(itemStack);
+                    }
+                } else if (otherStack.isOf(Items.FILLED_MAP) && canAdd(stack, otherStack, player.getWorld())) {
+                    MapIdComponent mapIdComponent = otherStack.remove(DataComponentTypes.MAP_ID);
+                    MapState state = FilledMapItem.getMapState(mapIdComponent, player.getWorld());
+                    tryAddMap(mapIdComponent, stack, Objects.requireNonNull(state).scale);
+                    otherStack.decrement(1);
+                    this.playInsertSound(player);
+                }
+                else if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
+                    addEmptyMap(stack);
+                    otherStack.decrement(1);
+                }
+
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    public static boolean canAddEmpty(ItemStack stack) {
+        NbtCompound atlasInfo = getAtlasInfo(stack);
+        int[] mapIDs = atlasInfo.getIntArray("map_ids");
+        return mapIDs.length + atlasInfo.getInt("empty_maps") < MAX_MAPS;
+    }
+
+    @Nullable
+    private ItemStack removeCurrentMap(ItemStack stack) {
+        int mapID = getCurrentMapId(stack);
+        if (mapID != -1) return tryRemoveMap(stack, mapID);
+        return null;
+    }
+
+    public ItemStack tryRemoveMap(ItemStack stack, int mapID)
+    {
+        HashSet<Integer> mapIDs = Arrays.stream(getAtlasInfo(stack).getIntArray("map_ids")).boxed().collect(Collectors.toCollection(HashSet::new));
+
+        mapIDs.remove(mapID);
+
+        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("map_ids", mapIDs.stream().toList())));
+
+        if (mapIDs.isEmpty()) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putByte("scale", (byte)-1)));
+        stack.remove(DataComponentTypes.MAP_ID);
+
+        ItemStack result = new ItemStack(Items.FILLED_MAP);
+        result.set(DataComponentTypes.MAP_ID, new MapIdComponent(mapID));
+        return result;
+    }
+
+    public static boolean canAdd(ItemStack atlasStack, ItemStack otherStack, World world)
+    {
+
+        MapState mapState = FilledMapItem.getMapState(otherStack, world);
+        NbtCompound atlasInfo = MapAtlasItem.getAtlasInfo(atlasStack);
+
+        if (mapState != null && (atlasInfo.getByte("scale") == -1 || mapState.scale == atlasInfo.getByte("scale"))) {
+            MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
+            List<Integer> mapIDs = new ArrayList<>(Arrays.stream(atlasInfo.getIntArray("map_ids")).boxed().toList());
+            return mapIdComponent != null && mapIDs.size() + atlasInfo.getInt("empty_maps") < MAX_MAPS && !mapIDs.contains(mapIdComponent.id());
+        }
+        return false;
     }
 
     @Override
@@ -177,7 +263,7 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
         MapPostProcessingComponent mapPostProcessingComponent = stack.get(DataComponentTypes.MAP_POST_PROCESSING);
 
         if (type.isAdvanced()) {
-            if (mapPostProcessingComponent == null) {
+            if (mapPostProcessingComponent == null && atlasInfo.getIntArray("map_ids").length > 0) {
                 tooltip.add(getIdText(atlasInfo.getIntArray("map_ids")));
             }
 
@@ -192,7 +278,7 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
             }
             else
             {
-                tooltip.add(Text.literal("First map determines scale level").formatted(Formatting.GRAY));
+                tooltip.add(Text.literal("Add map to set zoom level").formatted(Formatting.GRAY));
             }
         }
     }
@@ -204,6 +290,17 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
         }
 
         return result;
+    }
+
+    public static int getCurrentMapId(ItemStack stack)
+    {
+        MapIdComponent comp = stack.get(DataComponentTypes.MAP_ID);
+        if (comp == null) return -1;
+        return comp.id();
+    }
+    public static MapState getCurrentMapState(ItemStack stack, World world)
+    {
+        return FilledMapItem.getMapState(stack, world);
     }
 
     public void addEmptyMap(ItemStack stack) {
@@ -224,5 +321,17 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
     public byte getScale(ItemStack stack)
     {
         return getAtlasInfo(stack).getByte("scale");
+    }
+
+    private void playRemoveOneSound(Entity entity) {
+        entity.playSound(SoundEvents.ITEM_BUNDLE_REMOVE_ONE, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
+    }
+
+    private void playInsertSound(Entity entity) {
+        entity.playSound(SoundEvents.ITEM_BUNDLE_INSERT, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
+    }
+
+    private void playDropContentsSound(Entity entity) {
+        entity.playSound(SoundEvents.ITEM_BUNDLE_DROP_CONTENTS, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
     }
 }

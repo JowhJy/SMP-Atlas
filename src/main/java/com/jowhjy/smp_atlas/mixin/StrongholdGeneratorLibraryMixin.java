@@ -19,13 +19,17 @@ import net.minecraft.util.math.random.Random;
 import net.minecraft.world.StructureWorldAccess;
 import net.minecraft.world.gen.StructureAccessor;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(StrongholdGenerator.Library.class)
 public abstract class StrongholdGeneratorLibraryMixin extends StructurePiece {
+
+    @Shadow @Final private boolean tall;
 
     protected StrongholdGeneratorLibraryMixin(StructurePieceType type, int length, BlockBox boundingBox) {
         super(type, length, boundingBox);
@@ -34,23 +38,24 @@ public abstract class StrongholdGeneratorLibraryMixin extends StructurePiece {
     @Inject(method = "generate", at = @At(value = "TAIL"))
     public void addAtlasBookshelf(StructureWorldAccess world, StructureAccessor structureAccessor, ChunkGenerator chunkGenerator, Random random, BlockBox chunkBox, ChunkPos chunkPos, BlockPos pivot, CallbackInfo ci)
     {
-        //todo: multiple bookshelves generate
-        //todo: orientation
-        //todo: these random numbers are incorrect
-        int x = random.nextBetween(3,5), y = random.nextBetween(1,4), z = random.nextBetween(3, 12);
+        if (!this.tall) return;
+        int x = 1, y = 7, z = 7;
         BlockPos pos = offsetPos(x,y,z);
-        BlockState state = Blocks.CHISELED_BOOKSHELF.getDefaultState();
-        //if (boundingBox.contains(pos) && !world.getBlockState(pos).isOf(Blocks.CHISELED_BOOKSHELF)) {
-        //    state = orientateChest(world, pos, state);
-        //}
-        world.setBlockState(pos, state, Block.NOTIFY_LISTENERS);
-        BlockEntity blockEntity = world.getBlockEntity(pos);
-        if (blockEntity instanceof ChiseledBookshelfBlockEntity chiseledBookshelfBlockEntity) {
-            IChiseledBookshelfBlockEntityAccessor access = ((IChiseledBookshelfBlockEntityAccessor)chiseledBookshelfBlockEntity);
-            DefaultedList<ItemStack> inv = access.getInventory();
-            inv.set(random.nextInt(6), new ItemStack(SMPAtlas.MAP_ATLAS));
-            ((IChiseledBookshelfBlockEntityMixin)chiseledBookshelfBlockEntity).juhc$updateStateWithoutBeingAnnoyingAboutIt(state, world);
+        //debug
+        var DEBUG = world.getBlockState(pos);
+        System.out.println(DEBUG + " at " + pos);
+        if (boundingBox.contains(pos) && !world.getBlockState(pos).isOf(Blocks.CHISELED_BOOKSHELF)) {
+            BlockState state = orientateChest(world, pos, Blocks.CHISELED_BOOKSHELF.getDefaultState());
+            world.setBlockState(pos, state, Block.NOTIFY_LISTENERS);
+            BlockEntity blockEntity = world.getBlockEntity(pos);
+            if (blockEntity instanceof ChiseledBookshelfBlockEntity chiseledBookshelfBlockEntity) {
+                IChiseledBookshelfBlockEntityAccessor access = ((IChiseledBookshelfBlockEntityAccessor)chiseledBookshelfBlockEntity);
+                DefaultedList<ItemStack> inv = access.getInventory();
+                inv.set(random.nextInt(6), new ItemStack(SMPAtlas.MAP_ATLAS));
+                ((IChiseledBookshelfBlockEntityMixin)chiseledBookshelfBlockEntity).juhc$updateStateWithoutBeingAnnoyingAboutIt(state, world);
+            }
         }
+
     }
 
 }
