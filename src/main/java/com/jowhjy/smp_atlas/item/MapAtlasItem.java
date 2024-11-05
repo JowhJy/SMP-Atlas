@@ -4,7 +4,6 @@ import com.jowhjy.smp_atlas.MapStateHelper;
 import com.mojang.serialization.Dynamic;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
-import eu.pb4.polymer.resourcepack.api.PolymerModelData;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.*;
@@ -17,63 +16,99 @@ import net.minecraft.item.tooltip.TooltipType;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.network.packet.Packet;
-import net.minecraft.registry.RegistryWrapper;
+import net.minecraft.registry.*;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.*;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.dimension.DimensionType;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector2i;
+import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.text.Normalizer;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
+public class MapAtlasItem extends Item implements PolymerItem {
     private static final int MAX_MAPS = 64;
-    private static final PolymerModelData MODEL_DATA = PolymerResourcePackUtils.requestModel(Items.FILLED_MAP, Identifier.of("smp_atlas","item/map_atlas"));
+    private static final Identifier POLYMER_MODEL_DATA = PolymerResourcePackUtils.getBridgedModelId(Identifier.of("smp_atlas","item/map_atlas"));
+    private Vector2i mapOffset = new Vector2i(0,0);
 
-    //TODO: needs to be per item
-    //Optional<Pair<MapState, MapIdComponent>> currentMap = Optional.empty();
+    public MapAtlasItem(Settings settings) {
+        super(settings);
+    }
 
-    public MapAtlasItem() {
-        super(new Settings().maxCount(1).rarity(Rarity.UNCOMMON));
+    public static Item register() {
+        Identifier id = Identifier.of("smp_atlas", "map_atlas");
+        RegistryKey<Item> key = RegistryKey.of(RegistryKeys.ITEM, id);
+
+        Item.Settings settings = new Item.Settings().registryKey(key).maxCount(1).rarity(Rarity.UNCOMMON);
+
+        return Registry.register(Registries.ITEM, key, new MapAtlasItem(settings));
     }
 
     @Override
-    public Item getPolymerItem(ItemStack itemStack, @Nullable ServerPlayerEntity serverPlayerEntity) {
+    public ActionResult use(World world, PlayerEntity user, Hand hand) {
+        if (user instanceof ServerPlayerEntity player) {
+            if (player.getPlayerInput().sneak()) {
+                if (player.getPlayerInput().forward()) {
+                    mapOffset.y -= 1;
+                }
+                if (player.getPlayerInput().backward()) {
+                    mapOffset.y += 1;
+                }
+                if (player.getPlayerInput().left()) {
+                    mapOffset.x -= 1;
+                }
+                if (player.getPlayerInput().right()) {
+                    mapOffset.x += 1;
+                }
+                return ActionResult.SUCCESS;
+            }
+        }
+        return ActionResult.PASS;
+    }
+
+
+    @Override
+    public Item getPolymerItem(ItemStack itemStack, PacketContext packetContext) {
         return Items.FILLED_MAP;
     }
 
     @Override
-    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipType context, RegistryWrapper.WrapperLookup lookup, ServerPlayerEntity player) {
-        ItemStack out = PolymerItemUtils.createItemStack(itemStack, context, lookup, player);
+    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipType tooltipType, PacketContext context) {
+        ItemStack out = PolymerItemUtils.createItemStack(itemStack, context);
         itemStack.copyComponentsToNewStack(out.getItem(), itemStack.getCount());
         out.set(DataComponentTypes.MAP_ID, new MapIdComponent(getCurrentMapId(itemStack)));
         out.set(DataComponentTypes.ITEM_NAME, (Text.literal("Map Atlas").setStyle((Style.EMPTY).withItalic(false))));
-        out.set(DataComponentTypes.CUSTOM_MODEL_DATA, MODEL_DATA.asComponent());
         List<Text> tooltip = new ArrayList<>();
         appendTooltip(itemStack, null, tooltip, TooltipType.ADVANCED);
         out.set(DataComponentTypes.LORE, new LoreComponent(tooltip));
         return out;
     }
 
-    @Nullable
     @Override
-    public Packet<?> createSyncPacket(ItemStack stack, World world, PlayerEntity player) {
-        int mapID = getCurrentMapId(stack);
-        if (mapID == -1) return null;
-        return getCurrentMapState(stack, world).getPlayerMarkerPacket(new MapIdComponent(getCurrentMapId(stack)), player);
+    @Nullable
+    public Identifier getPolymerItemModel(ItemStack stack, PacketContext context)
+    {
+        return POLYMER_MODEL_DATA;
     }
 
     public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
     {
+        byte scale = getAtlasInfo(stack).getByte("scale");
+        BlockPos requiredMapPos = new BlockPos((mapOffset.x * (64 << scale)) + player.getBlockX(),0, (mapOffset.y * (64 << scale)) + player.getBlockZ());
+
         //TODO: we can possibly check this for an unknown map too by storing the "map region" a player is in
-        if (getCurrentMapId(stack) != -1 && MapStateHelper.mapStateContainsPlayer(getCurrentMapState(stack, player.getWorld()), player)) return Optional.of(new Pair<>(getCurrentMapState(stack, player.getWorld()),stack.get(DataComponentTypes.MAP_ID)));
+        if (getCurrentMapId(stack) != -1 && MapStateHelper.mapStateContainsPos(getCurrentMapState(stack, player.getWorld()), requiredMapPos)) return Optional.of(new Pair<>(getCurrentMapState(stack, player.getWorld()),stack.get(DataComponentTypes.MAP_ID)));
 
         //TODO: optimize for loop
         int[] mapIDs = getAtlasInfo(stack).getIntArray("map_ids");
@@ -83,7 +118,7 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
         {
             MapIdComponent comp = new MapIdComponent(map_id);
             MapState mapState = FilledMapItem.getMapState(comp, player.getServerWorld());
-            if (MapStateHelper.mapStateContainsPlayer(mapState, player))
+            if (MapStateHelper.mapStateContainsPos(mapState, requiredMapPos))
                 return Optional.of(new Pair<>(mapState, comp));
         }
         return Optional.empty();
@@ -95,6 +130,9 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
         //todo: optimize further by storing the maps in a sensible way?
         if (entity instanceof ServerPlayerEntity player && (selected || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
+
+            if (!player.getPlayerInput().sneak()) mapOffset.zero();
+
             var prevMapID = stack.get(DataComponentTypes.MAP_ID);
             Optional<Pair<MapState, MapIdComponent>> currentMap = getMapWithPlayer(player, stack);
 
@@ -106,8 +144,10 @@ public class MapAtlasItem extends NetworkSyncedItem implements PolymerItem {
                     },
                     () -> tryMakeNewMap(stack, world, player));
 
-            if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getRight())))
+            if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getRight()))) {
                 stack.set(DataComponentTypes.MAP_ID, currentMap.get().getRight());
+                ((ServerWorld)world).playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
+            }
         }
     }
 

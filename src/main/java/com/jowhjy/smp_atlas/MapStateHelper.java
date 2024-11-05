@@ -37,6 +37,19 @@ public class MapStateHelper {
         return (0 <= l && l < 128 && 0 <= m && m < 128);
 
     }
+    public static boolean mapStateContainsPos(MapState mapState, BlockPos pos)
+    {
+        if (mapState == null) return false;
+
+        //ripped from the filledmapitem.updatecolors method
+        int scale = 1 << mapState.scale;
+        int cx = mapState.centerX;
+        int cy = mapState.centerZ;
+        int l = MathHelper.floor(pos.getX() - (double)cx) / scale + 64;
+        int m = MathHelper.floor(pos.getZ() - (double)cy) / scale + 64;
+        return (0 <= l && l < 128 && 0 <= m && m < 128);
+
+    }
 
     //and now I ripped the entire method :D
     public static void updateColors(World world, Entity entity, MapState state) {

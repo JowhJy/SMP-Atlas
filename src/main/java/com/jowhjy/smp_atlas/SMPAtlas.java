@@ -2,7 +2,6 @@ package com.jowhjy.smp_atlas;
 
 import com.jowhjy.smp_atlas.component.AtlasContentsComponent;
 import com.jowhjy.smp_atlas.item.MapAtlasItem;
-import eu.pb4.polymer.resourcepack.api.PolymerModelData;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
@@ -18,7 +17,7 @@ public class SMPAtlas implements ModInitializer {
 
     public static final String MOD_ID = "smp_atlas";
 
-    public static final Item MAP_ATLAS = Registry.register(Registries.ITEM, Identifier.of("smp_atlas", "map_atlas"), new MapAtlasItem().asItem());
+    public static final Item MAP_ATLAS = MapAtlasItem.register();
 
     @Override
     public void onInitialize() {
