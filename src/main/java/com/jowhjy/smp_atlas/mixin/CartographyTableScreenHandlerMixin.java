@@ -1,10 +1,12 @@
 package com.jowhjy.smp_atlas.mixin;
 
+import com.jowhjy.smp_atlas.MapStateHelper;
 import com.jowhjy.smp_atlas.SMPAtlas;
 import com.jowhjy.smp_atlas.item.MapAtlasItem;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.MapIdComponent;
 import net.minecraft.component.type.MapPostProcessingComponent;
+import net.minecraft.component.type.NbtComponent;
 import net.minecraft.inventory.CraftingResultInventory;
 import net.minecraft.item.FilledMapItem;
 import net.minecraft.item.ItemStack;
@@ -14,6 +16,7 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.screen.CartographyTableScreenHandler;
 import net.minecraft.screen.ScreenHandlerContext;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.util.math.ChunkPos;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -21,11 +24,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
 
 @Mixin(CartographyTableScreenHandler.class)
 public class CartographyTableScreenHandlerMixin {
@@ -74,10 +72,26 @@ public class CartographyTableScreenHandlerMixin {
                     itemStack4 = map.copyWithCount(1);
                     itemStack4.set(DataComponentTypes.MAP_POST_PROCESSING, MapPostProcessingComponent.LOCK);
                     thisCTSH.sendContentUpdates();
-                } else if (item.isOf(Items.SHEARS) && !mapState.locked && mapState.scale > 0) {
-                    itemStack4 = map.copyWithCount(4);
-                    // todo now it just takes the shears to copy the map x4, thats not the goal!
+                } else if (item.isOf(Items.SHEARS) && !mapState.locked && mapState.scale > 0 && MapStateHelper.mapStateContainsPos(mapState, new ChunkPos(pos.getX() / 16, pos.getZ() / 16))) {
+                    itemStack4 = map.copyWithCount(1);
+                    NbtCompound customNbt = new NbtCompound();
+                    customNbt.putInt("chunkX", pos.getX() / 16);
+                    customNbt.putInt("chunkZ", pos.getZ() / 16);
+                    itemStack4.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbtCompound -> nbtCompound.put("to_zoom_in",customNbt)));
                     thisCTSH.sendContentUpdates();
+                } else if (item.isOf(Items.FILLED_MAP)) {
+                    MapState secondMapState = FilledMapItem.getMapState(item, world);
+                    MapIdComponent mapIdComponent = item.get(DataComponentTypes.MAP_ID);
+                    if (mapIdComponent != null && secondMapState != null && MapStateHelper.areEqualMappedAreas(mapState, secondMapState)) {
+                        itemStack4 = map.copyWithCount(1);
+                        itemStack4.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbtCompound -> nbtCompound.putInt("to_merge_with_id", mapIdComponent.id())));
+                        thisCTSH.sendContentUpdates();
+                    }
+                    else {
+                        this.resultInventory.removeStack(2);
+                        thisCTSH.sendContentUpdates();
+                        return;
+                    }
                 } else {
                     if (!item.isOf(Items.MAP)) {
                         this.resultInventory.removeStack(2);
@@ -90,9 +104,9 @@ public class CartographyTableScreenHandlerMixin {
                 }
 
                 if (!ItemStack.areEqual(itemStack4, oldResult)) {
-                    this.resultInventory.setStack(2, itemStack4);
-                    thisCTSH.sendContentUpdates();
-                }
+                        this.resultInventory.setStack(2, itemStack4);
+                        thisCTSH.sendContentUpdates();
+                    }
             }
         });
         //atlas stuff

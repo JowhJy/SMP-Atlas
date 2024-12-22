@@ -1,6 +1,6 @@
 {
   "model": {
     "type": "minecraft:model",
-    "model": "juhc:item/thorned_arrow"
+    "model": "smp_atlas:item/map_atlas"
   }
 }

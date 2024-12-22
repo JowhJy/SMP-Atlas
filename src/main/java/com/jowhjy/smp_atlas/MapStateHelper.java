@@ -4,21 +4,28 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultiset;
 import com.google.common.collect.Multiset;
 import com.google.common.collect.Multisets;
+import com.jowhjy.smp_atlas.mixin.FilledMapItemMixin;
+import com.jowhjy.smp_atlas.mixin.MapStateAccessor;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.MapColor;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.MapIdComponent;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.fluid.FluidState;
+import net.minecraft.item.FilledMapItem;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.item.map.MapState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.util.math.*;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.WorldChunk;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Vector2i;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,18 +44,36 @@ public class MapStateHelper {
         return (0 <= l && l < 128 && 0 <= m && m < 128);
 
     }
-    public static boolean mapStateContainsPos(MapState mapState, BlockPos pos)
+    public static boolean mapStateContainsPos(MapState mapState, ChunkPos pos)
     {
         if (mapState == null) return false;
 
         //ripped from the filledmapitem.updatecolors method
         int scale = 1 << mapState.scale;
-        int cx = mapState.centerX;
-        int cy = mapState.centerZ;
-        int l = MathHelper.floor(pos.getX() - (double)cx) / scale + 64;
-        int m = MathHelper.floor(pos.getZ() - (double)cy) / scale + 64;
-        return (0 <= l && l < 128 && 0 <= m && m < 128);
+        int cx = mapState.centerX / 16;
+        int cy = mapState.centerZ / 16;
+        int l = MathHelper.floor(pos.x - (double)cx) / scale + 4;
+        int m = MathHelper.floor(pos.z - (double)cy) / scale + 4;
+        return (0 <= l && l < 8 && 0 <= m && m < 8);
+    }
 
+    public static boolean isCorrectMapState(@Nullable MapState mapState, @Nullable Vector2i mapCenter, @Nullable RegistryKey<World> world)
+    {
+        return mapState != null && mapCenter != null && world != null
+                && mapState.centerX == mapCenter.x && mapState.centerZ == mapCenter.y
+                && mapState.dimension == world;
+    }
+
+
+    public static Vector2i getMapCenterForPosAndScale(ChunkPos pos, byte scale)
+    {
+        //ripped from mojang again because I am incapable of math right now
+        int i = 8 * (1 << scale);
+        int j = MathHelper.floor((pos.x + 4.0) / (double)i);
+        int k = MathHelper.floor((pos.z + 4.0) / (double)i);
+        int l = j * i + i / 2 - 4;
+        int m = k * i + i / 2 - 4;
+        return new Vector2i(l * 16, m * 16);
     }
 
     //and now I ripped the entire method :D
@@ -171,16 +196,77 @@ public class MapStateHelper {
         return !fluidState.isEmpty() && !state.isSideSolidFullSquare(world, pos, Direction.UP) ? fluidState.getBlockState() : state;
     }
 
-    public static List<ItemStack> splitMapState(ItemStack map) {
+    public static @Nullable MapState zoomIn(MapState oldMapState, ChunkPos pos)
+    {
+        //check input
+        if (!mapStateContainsPos(oldMapState,pos) || oldMapState.scale < 1) return null;
+
+        MapState newMapState = MapState.of(pos.getCenterX(), pos.getCenterZ(), (byte)(oldMapState.scale - 1), ((MapStateAccessor)oldMapState).getShowDecorations(), ((MapStateAccessor)oldMapState).getUnlimitedTracking(), oldMapState.dimension);
+
+        int startValueX = newMapState.centerX < oldMapState.centerX ? 0 : 64;
+        int startValueZ = newMapState.centerZ < oldMapState.centerZ ? 0 : 64;
+
+        for (int x = 0; x < 128; x++)
+            for (int z = 0; z < 128; z++)
+            {
+                newMapState.putColor(x, z, oldMapState.colors[startValueX + x / 2 + 128*(startValueZ + z / 2)]);
+            }
+        return newMapState;
+    }
+
+    //unfinished, it was basically the plan to do zoomIn on all four parts at once
+    public static List<ItemStack> splitMapState(ItemStack map, World world) {
         ArrayList<ItemStack> result = new ArrayList<>();
+        MapState[] mapStates = new MapState[4];
+
+        MapState oldMapState = FilledMapItem.getMapState(map, world);
+        if (oldMapState == null) return result;
+
+        //TODO check input!
+        mapStates[0] = MapState.of(oldMapState.centerX - 2, oldMapState.centerZ - 2, (byte)(oldMapState.scale - 1), ((MapStateAccessor)oldMapState).getShowDecorations(), ((MapStateAccessor)oldMapState).getUnlimitedTracking(), oldMapState.dimension);
+        for (int x = 0; x < 64; x++)
+            for (int z = 0; z < 64; z++)
+            {
+                mapStates[0].putColor(x, z, oldMapState.colors[x / 2 + 128* (z / 2)]);
+            }
+        for (int x = 64; x < 128; x++)
+            for (int z = 0; z < 64; z++)
+            {
+                mapStates[1].putColor(x, z, oldMapState.colors[64 + x / 2 + 128* (z / 2)]);
+            }
+        for (int x = 0; x < 64; x++)
+            for (int z = 64; z < 128; z++)
+            {
+                mapStates[2].putColor(x, z, oldMapState.colors[x / 2 + 128* (64 + z / 2)]);
+            }
+        for (int x = 64; x < 128; x++)
+            for (int z = 64; z < 128; z++)
+            {
+                mapStates[3].putColor(x, z, oldMapState.colors[64 + x / 2 + 128* (64 + z / 2)]);
+            }
+
+        mapStates[1] = MapState.of(oldMapState.centerX + 2, oldMapState.centerZ - 2, (byte)(oldMapState.scale - 1), ((MapStateAccessor)oldMapState).getShowDecorations(), ((MapStateAccessor)oldMapState).getUnlimitedTracking(), oldMapState.dimension);
+        mapStates[2] = MapState.of(oldMapState.centerX - 2, oldMapState.centerZ + 2, (byte)(oldMapState.scale - 1), ((MapStateAccessor)oldMapState).getShowDecorations(), ((MapStateAccessor)oldMapState).getUnlimitedTracking(), oldMapState.dimension);
+        mapStates[3] = MapState.of(oldMapState.centerX + 2, oldMapState.centerZ + 2, (byte)(oldMapState.scale - 1), ((MapStateAccessor)oldMapState).getShowDecorations(), ((MapStateAccessor)oldMapState).getUnlimitedTracking(), oldMapState.dimension);
+
+        for (MapState newMapState : mapStates)
+        {
+            if (newMapState == null) continue;
+
+            MapIdComponent mapIdComponent = world.increaseAndGetMapId();
+            world.putMapState(mapIdComponent, newMapState);
+            ItemStack newMap = new ItemStack(Items.FILLED_MAP);
+            newMap.set(DataComponentTypes.MAP_ID, mapIdComponent);
+            result.add(newMap);
+        }
 
         return result;
     }
 
-    public static MapState transferContentsToZoomed(MapState input, MapState result)
+    public static void transferContentsToZoomed(MapState input, MapState result)
     {
         //check input
-        if (result.scale - input.scale != 1) return result;
+        if (result.scale - input.scale != 1) return;
 
         //find out what part of the result map is the input map
         int xModifier = 0, zModifier = 0;
@@ -194,6 +280,27 @@ public class MapStateHelper {
                 result.setColor(x / 2 + xModifier, z / 2 + zModifier, input.colors[x + 128*z]);
             }
         }
-        return result;
+    }
+
+    public static void mergeMaps(MapState first, MapState second)
+    {
+        //check input
+        if (!areEqualMappedAreas(first,second)) return;
+
+        //transfer 1 in 4 pixels from input to result (cant do all because of scaling)
+        for (int x = 0; x < 128; x++)
+        {
+            for (int z = 0; z < 128; z ++) {
+                if (second.colors[x + 128*z] != 0) first.putColor(x, z, second.colors[x + 128*z]);
+            }
+        }
+    }
+
+    public static boolean areEqualMappedAreas(MapState first, MapState second)
+    {
+        return first.scale == second.scale
+                && first.centerX == second.centerX
+                && first.centerZ == second.centerZ
+                && first.dimension == second.dimension;
     }
 }

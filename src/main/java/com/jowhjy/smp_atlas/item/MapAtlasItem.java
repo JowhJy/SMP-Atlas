@@ -4,7 +4,6 @@ import com.jowhjy.smp_atlas.MapStateHelper;
 import com.mojang.serialization.Dynamic;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
-import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.*;
 import net.minecraft.entity.Entity;
@@ -15,7 +14,7 @@ import net.minecraft.item.map.MapState;
 import net.minecraft.item.tooltip.TooltipType;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.network.packet.Packet;
+import net.minecraft.network.packet.s2c.play.MapUpdateS2CPacket;
 import net.minecraft.registry.*;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -27,19 +26,18 @@ import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.*;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import net.minecraft.world.dimension.DimensionType;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
 import xyz.nucleoid.packettweaker.PacketContext;
 
-import java.text.Normalizer;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class MapAtlasItem extends Item implements PolymerItem {
     private static final int MAX_MAPS = 64;
-    private static final Identifier POLYMER_MODEL_DATA = PolymerResourcePackUtils.getBridgedModelId(Identifier.of("smp_atlas","item/map_atlas"));
     private Vector2i mapOffset = new Vector2i(0,0);
 
     public MapAtlasItem(Settings settings) {
@@ -71,6 +69,13 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 if (player.getPlayerInput().right()) {
                     mapOffset.x += 1;
                 }
+                MutableText offsetMessage = Text.literal("Offset:");
+                if (mapOffset.y > 0) offsetMessage.append(" ↓" + mapOffset.y);
+                else if (mapOffset.y < 0) offsetMessage.append(" ↑" + -mapOffset.y);
+                if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
+                else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
+                else if (mapOffset.y == 0) offsetMessage.append(" 0");
+                user.sendMessage(offsetMessage, true);
                 return ActionResult.SUCCESS;
             }
         }
@@ -96,21 +101,28 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    @Nullable
-    public Identifier getPolymerItemModel(ItemStack stack, PacketContext context)
-    {
-        return POLYMER_MODEL_DATA;
+    public @Nullable Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
+        return PolymerItem.super.getPolymerItemModel(stack, context);
     }
 
     public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
     {
         byte scale = getAtlasInfo(stack).getByte("scale");
-        BlockPos requiredMapPos = new BlockPos((mapOffset.x * (64 << scale)) + player.getBlockX(),0, (mapOffset.y * (64 << scale)) + player.getBlockZ());
+        if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
+        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.y * (8 << scale)) + player.getChunkPos().z);
+        Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
+        MapState currentMapState = getCurrentMapState(stack, player.getWorld());
 
-        //TODO: we can possibly check this for an unknown map too by storing the "map region" a player is in
-        if (getCurrentMapId(stack) != -1 && MapStateHelper.mapStateContainsPos(getCurrentMapState(stack, player.getWorld()), requiredMapPos)) return Optional.of(new Pair<>(getCurrentMapState(stack, player.getWorld()),stack.get(DataComponentTypes.MAP_ID)));
+        //if the player is still in the same map region (unlike map state this does also work for uncharted areas!) and world then we don't check any further
+        if (currentMapState != null && isMapTheSame(stack, requiredCenterPos, player.getWorld().getRegistryKey())) {
+            return Optional.of(new Pair<>(currentMapState, stack.get(DataComponentTypes.MAP_ID)));
+        }
 
-        //TODO: optimize for loop
+        setCurrentMapCenter(stack, requiredCenterPos);
+        setCurrentMapWorld(stack, player.getWorld().getRegistryKey());
+
+        //this checks all the maps in the atlas
+        //TODO: optimize for loop? we would do this by storing the maps in a better data structure than a simple array i think
         int[] mapIDs = getAtlasInfo(stack).getIntArray("map_ids");
 
 
@@ -118,10 +130,17 @@ public class MapAtlasItem extends Item implements PolymerItem {
         {
             MapIdComponent comp = new MapIdComponent(map_id);
             MapState mapState = FilledMapItem.getMapState(comp, player.getServerWorld());
-            if (MapStateHelper.mapStateContainsPos(mapState, requiredMapPos))
+            if (MapStateHelper.isCorrectMapState(mapState, requiredCenterPos, player.getServerWorld().getRegistryKey())) {
                 return Optional.of(new Pair<>(mapState, comp));
+            }
         }
         return Optional.empty();
+    }
+
+    public boolean isMapTheSame(ItemStack stack, @Nullable Vector2i requiredCenterPos, @Nullable RegistryKey<World> requiredWorld)
+    {
+        return requiredCenterPos != null && requiredWorld != null
+                && Objects.equals(getCurrentMapCenter(stack),requiredCenterPos) && getCurrentMapWorld(stack) == requiredWorld;
     }
 
     @Override
@@ -131,7 +150,11 @@ public class MapAtlasItem extends Item implements PolymerItem {
         if (entity instanceof ServerPlayerEntity player && (selected || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
 
-            if (!player.getPlayerInput().sneak()) mapOffset.zero();
+            if (!player.getPlayerInput().sneak() && !(mapOffset.x == 0 && mapOffset.y == 0)) {
+
+                mapOffset.zero();
+                player.sendMessage(Text.of("Offset: 0"),true);
+            }
 
             var prevMapID = stack.get(DataComponentTypes.MAP_ID);
             Optional<Pair<MapState, MapIdComponent>> currentMap = getMapWithPlayer(player, stack);
@@ -148,23 +171,23 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 stack.set(DataComponentTypes.MAP_ID, currentMap.get().getRight());
                 ((ServerWorld)world).playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
             }
+            else if (currentMap.isEmpty()) {
+                MapState unknownMapState = world.getMapState(new MapIdComponent(-1));
+                //TODO would be nice if the mod initialized the unknown map by itself!
+                if (unknownMapState != null) player.networkHandler.sendPacket(new MapUpdateS2CPacket(new MapIdComponent(-1), (byte)0, true, List.of(), new MapState.UpdateData(0,0,128,128, unknownMapState.colors)));
+            }
         }
     }
 
     public void tryMakeNewMap(ItemStack stack, World world, ServerPlayerEntity entity)
     {
         int emptyMaps = getEmptyMaps(stack);
-        if (!getAtlasInfo(stack).contains("dimension"))
-        {
-            Identifier.CODEC
-                    .encodeStart(NbtOps.INSTANCE, world.getRegistryKey().getValue()).resultOrPartial()
-                    .ifPresent(nbtElement -> stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.getCompound("atlas_info").put("dimension", nbtElement))));
-        }
-        //System.out.println(world.getRegistryKey().toString());
-        //System.out.println(this.getAtlasInfo(stack).getString("dimension"));
 
-        if (emptyMaps > 0 && (Objects.equals(world.getRegistryKey(), DimensionType.worldFromDimensionNbt(new Dynamic<>(NbtOps.INSTANCE,getAtlasInfo(stack).get("dimension"))).resultOrPartial().orElseThrow())))
+        if (emptyMaps > 0)
         {
+            //default to scale 1 if unset (because it was empty before)
+            if (getScale(stack) == -1) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.getCompound("atlas_info").putByte("scale", (byte) 1)));
+
             setEmptyMaps(stack,emptyMaps - 1);
             ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
             this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), stack, getScale(stack));
@@ -338,14 +361,39 @@ public class MapAtlasItem extends Item implements PolymerItem {
         if (comp == null) return -1;
         return comp.id();
     }
+
     public static MapState getCurrentMapState(ItemStack stack, World world)
     {
         return FilledMapItem.getMapState(stack, world);
     }
+    public static @Nullable Vector2i getCurrentMapCenter(ItemStack stack)
+    {
+        if (!getAtlasInfo(stack).contains("current_map_center")) return null;
+        int[] arr = getAtlasInfo(stack).getIntArray("current_map_center");
+        return new Vector2i(arr[0], arr[1]);
+    }
+    public static @Nullable RegistryKey<World> getCurrentMapWorld(ItemStack stack) {
+        if (!getAtlasInfo(stack).contains("current_map_world")) return null;
+        return World.CODEC
+                .parse(NbtOps.INSTANCE, getAtlasInfo(stack).get("current_map_world"))
+                .result()
+                .orElse(World.OVERWORLD);
+    }
+    public static void setCurrentMapCenter(ItemStack stack, Vector2i value)
+    {
+        int[] arr = new int[]{value.x,value.y};
+        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("current_map_center", arr)));
+    }
+    public static void setCurrentMapWorld(ItemStack stack, RegistryKey<World> world)
+    {
+        Identifier.CODEC
+                .encodeStart(NbtOps.INSTANCE, world.getValue())
+                .result()
+                .ifPresent(encoded -> stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").put("current_map_world", encoded))));
+
+    }
 
     public void addEmptyMap(ItemStack stack) {
-        //default to scale 1 if unset
-        if (getScale(stack) == -1) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.getCompound("atlas_info").putByte("scale", (byte) 1)));
         setEmptyMaps(stack, getEmptyMaps(stack) + 1);
     }
 
