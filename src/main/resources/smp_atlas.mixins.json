@@ -11,7 +11,8 @@
     "MapStateAccessor",
     "MapStateMixin",
     "StrongholdGeneratorLibraryMixin",
-    "StructurePieceMixin"
+    "StructurePieceMixin",
+    "WoodlandMansionGenerator$PieceMixin"
   ],
   "injectors": {
     "defaultRequire": 1
