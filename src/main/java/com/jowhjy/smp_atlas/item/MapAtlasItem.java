@@ -1,19 +1,19 @@
 package com.jowhjy.smp_atlas.item;
 
+import com.google.common.collect.Lists;
+import com.jowhjy.smp_atlas.AtlasInfo;
 import com.jowhjy.smp_atlas.MapStateHelper;
-import com.mojang.serialization.Dynamic;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.*;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.inventory.StackReference;
 import net.minecraft.item.*;
 import net.minecraft.item.map.MapState;
 import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtOps;
 import net.minecraft.network.packet.s2c.play.MapUpdateS2CPacket;
 import net.minecraft.registry.*;
 import net.minecraft.screen.slot.Slot;
@@ -25,18 +25,17 @@ import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.*;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
-import net.minecraft.world.dimension.DimensionType;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.*;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
 public class MapAtlasItem extends Item implements PolymerItem {
+
     private static final int MAX_MAPS = 64;
     private Vector2i mapOffset = new Vector2i(0,0);
 
@@ -94,8 +93,9 @@ public class MapAtlasItem extends Item implements PolymerItem {
         itemStack.copyComponentsToNewStack(out.getItem(), itemStack.getCount());
         out.set(DataComponentTypes.MAP_ID, new MapIdComponent(getCurrentMapId(itemStack)));
         out.set(DataComponentTypes.ITEM_NAME, (Text.literal("Map Atlas").setStyle((Style.EMPTY).withItalic(false))));
-        List<Text> tooltip = new ArrayList<>();
-        appendTooltip(itemStack, null, tooltip, TooltipType.ADVANCED);
+        out.apply(DataComponentTypes.TOOLTIP_DISPLAY, TooltipDisplayComponent.DEFAULT, comp -> comp.with(DataComponentTypes.MAP_ID, true));
+        List<Text> tooltip = Lists.newArrayList();
+        appendTooltip(itemStack, null, itemStack.get(DataComponentTypes.TOOLTIP_DISPLAY), tooltip::add, TooltipType.ADVANCED); //the given TooltipType is always basic for some reason, polymer doesn't properly get it from the player
         out.set(DataComponentTypes.LORE, new LoreComponent(tooltip));
         return out;
     }
@@ -107,7 +107,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
     {
-        byte scale = getAtlasInfo(stack).getByte("scale");
+        byte scale = getAtlasInfo(stack).scale();
         if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
         ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.y * (8 << scale)) + player.getChunkPos().z);
         Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
@@ -118,12 +118,12 @@ public class MapAtlasItem extends Item implements PolymerItem {
             return Optional.of(new Pair<>(currentMapState, stack.get(DataComponentTypes.MAP_ID)));
         }
 
-        setCurrentMapCenter(stack, requiredCenterPos);
+        setCurrentMapCenter(stack, new ChunkPos(requiredCenterPos.x,requiredCenterPos.y));
         setCurrentMapWorld(stack, player.getWorld().getRegistryKey());
 
         //this checks all the maps in the atlas
         //TODO: optimize for loop? we would do this by storing the maps in a better data structure than a simple array i think
-        int[] mapIDs = getAtlasInfo(stack).getIntArray("map_ids");
+        var mapIDs = getAtlasInfo(stack).mapIDs();
 
 
         for (int map_id : mapIDs)
@@ -144,10 +144,10 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void inventoryTick(ItemStack stack, World world, Entity entity, int slot, boolean selected)
+    public void inventoryTick(ItemStack stack, ServerWorld world, Entity entity, @Nullable EquipmentSlot slot)
     {
         //todo: optimize further by storing the maps in a sensible way?
-        if (entity instanceof ServerPlayerEntity player && (selected || player.getOffHandStack().equals(stack)) && !world.isClient)
+        if (slot != null && entity instanceof ServerPlayerEntity player && (player.getInventory().getSelectedSlot() == slot.getEntitySlotId() || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
 
             if (!player.getPlayerInput().sneak() && !(mapOffset.x == 0 && mapOffset.y == 0)) {
@@ -179,14 +179,17 @@ public class MapAtlasItem extends Item implements PolymerItem {
         }
     }
 
-    public void tryMakeNewMap(ItemStack stack, World world, ServerPlayerEntity entity)
+    public void tryMakeNewMap(ItemStack stack, ServerWorld world, ServerPlayerEntity entity)
     {
-        int emptyMaps = getEmptyMaps(stack);
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        int emptyMaps = oldAtlasInfo.emptyMaps();
 
         if (emptyMaps > 0)
         {
             //default to scale 1 if unset (because it was empty before)
-            if (getScale(stack) == -1) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.getCompound("atlas_info").putByte("scale", (byte) 1)));
+            if (oldAtlasInfo.scale() == -1) {
+                setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)1,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld()));
+            }
 
             setEmptyMaps(stack,emptyMaps - 1);
             ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
@@ -195,33 +198,26 @@ public class MapAtlasItem extends Item implements PolymerItem {
         else stack.remove(DataComponentTypes.MAP_ID);
     }
 
-    public static NbtCompound getAtlasInfo(ItemStack stack)
+    public static AtlasInfo getAtlasInfo(ItemStack stack)
     {
-        NbtCompound compound = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt();
-        if (!compound.contains("atlas_info")) {
-            NbtCompound atlasInfoCompound = new NbtCompound();
-            atlasInfoCompound.putIntArray("map_ids", new int[]{});
-            atlasInfoCompound.putInt("empty_maps", 0);
-            atlasInfoCompound.putByte("scale", (byte) -1);
-            stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.put("atlas_info", atlasInfoCompound)));
-        }
-        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().getCompound("atlas_info");
+        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElseGet(() -> new AtlasInfo(List.of(), 0, (byte) -1, Optional.empty(), Optional.empty()));
+    }
+    public static void setAtlasInfo(ItemStack stack, AtlasInfo atlasInfo) {
+        stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.put("atlas_info",AtlasInfo.CODEC, atlasInfo)));
     }
 
     public void tryAddMap(MapIdComponent mapIdComponent, ItemStack stack, byte scale) {
 
         if (mapIdComponent == null) return;
 
-        if (getScale(stack) == -1) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putByte("scale", scale)));
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        if (oldAtlasInfo.scale() == -1 ||  // any scale if it was unset
+            oldAtlasInfo.scale() == scale) { //otherwise you can only add maps of the correct scale
 
-        //you can only add maps of the correct scale
-        else if (getScale(stack) != scale) return;
-
-        HashSet<Integer> mapIDs = Arrays.stream(getAtlasInfo(stack).getIntArray("map_ids")).boxed().collect(Collectors.toCollection(HashSet::new));
-
-        mapIDs.add(mapIdComponent.id());
-
-        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("map_ids", mapIDs.stream().toList())));
+            HashSet<Integer> mapIDs = new HashSet<>(oldAtlasInfo.mapIDs());
+            mapIDs.add(mapIdComponent.id());
+            setAtlasInfo(stack, new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), scale,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld())); //update the info to the new list and possibly new scale
+        }
 
         stack.remove(DataComponentTypes.MAP_ID);
 
@@ -277,9 +273,9 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     public static boolean canAddEmpty(ItemStack stack) {
-        NbtCompound atlasInfo = getAtlasInfo(stack);
-        int[] mapIDs = atlasInfo.getIntArray("map_ids");
-        return mapIDs.length + atlasInfo.getInt("empty_maps") < MAX_MAPS;
+        AtlasInfo atlasInfo = getAtlasInfo(stack);
+        var mapIDs = atlasInfo.mapIDs();
+        return mapIDs.size() + atlasInfo.emptyMaps() < MAX_MAPS;
     }
 
     @Nullable
@@ -291,13 +287,18 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public ItemStack tryRemoveMap(ItemStack stack, int mapID)
     {
-        HashSet<Integer> mapIDs = Arrays.stream(getAtlasInfo(stack).getIntArray("map_ids")).boxed().collect(Collectors.toCollection(HashSet::new));
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+
+        HashSet<Integer> mapIDs = new HashSet<>(oldAtlasInfo.mapIDs());
 
         mapIDs.remove(mapID);
 
-        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("map_ids", mapIDs.stream().toList())));
+        oldAtlasInfo = new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld());
+        setAtlasInfo(stack, oldAtlasInfo);
 
-        if (mapIDs.isEmpty()) stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putByte("scale", (byte)-1)));
+        //scale back to unset if now -1
+        if (mapIDs.isEmpty()) setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)-1, oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld()));
+
         stack.remove(DataComponentTypes.MAP_ID);
 
         ItemStack result = new ItemStack(Items.FILLED_MAP);
@@ -309,43 +310,43 @@ public class MapAtlasItem extends Item implements PolymerItem {
     {
 
         MapState mapState = FilledMapItem.getMapState(otherStack, world);
-        NbtCompound atlasInfo = MapAtlasItem.getAtlasInfo(atlasStack);
+        AtlasInfo atlasInfo = MapAtlasItem.getAtlasInfo(atlasStack);
 
-        if (mapState != null && (atlasInfo.getByte("scale") == -1 || mapState.scale == atlasInfo.getByte("scale"))) {
+        if (mapState != null && (atlasInfo.scale() == -1 || mapState.scale == atlasInfo.scale())) {
             MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
-            List<Integer> mapIDs = new ArrayList<>(Arrays.stream(atlasInfo.getIntArray("map_ids")).boxed().toList());
-            return mapIdComponent != null && mapIDs.size() + atlasInfo.getInt("empty_maps") < MAX_MAPS && !mapIDs.contains(mapIdComponent.id());
+            List<Integer> mapIDs = atlasInfo.mapIDs();
+            return mapIdComponent != null && mapIDs.size() + atlasInfo.emptyMaps() < MAX_MAPS && !mapIDs.contains(mapIdComponent.id());
         }
         return false;
     }
 
     @Override
-    public void appendTooltip(ItemStack stack, Item.TooltipContext context, List<Text> tooltip, TooltipType type) {
-        NbtCompound atlasInfo = getAtlasInfo(stack);
+    public void appendTooltip(ItemStack stack, Item.TooltipContext context, TooltipDisplayComponent displayComponent, Consumer<Text> tooltip, TooltipType type) {
+        AtlasInfo atlasInfo = getAtlasInfo(stack);
 
         MapPostProcessingComponent mapPostProcessingComponent = stack.get(DataComponentTypes.MAP_POST_PROCESSING);
 
         if (type.isAdvanced()) {
-            if (mapPostProcessingComponent == null && atlasInfo.getIntArray("map_ids").length > 0) {
-                tooltip.add(getIdText(atlasInfo.getIntArray("map_ids")));
+            if (mapPostProcessingComponent == null && !atlasInfo.mapIDs().isEmpty()) {
+                tooltip.accept(getIdText(atlasInfo.mapIDs()));
             }
 
-            int emptyMaps = atlasInfo.getInt("empty_maps");
+            int emptyMaps = atlasInfo.emptyMaps();
             int i = mapPostProcessingComponent == MapPostProcessingComponent.SCALE ? 1 : 0;
-            tooltip.add(Text.literal("Empty Maps: " + (emptyMaps + i)).formatted(Formatting.GRAY));
+            tooltip.accept(Text.literal("Empty Maps: " + (emptyMaps + i)).formatted(Formatting.GRAY));
 
-            int scale = Math.min(atlasInfo.getByte("scale"), 4);
+            int scale = Math.min(atlasInfo.scale(), 4);
             if (scale != -1) {
-                tooltip.add(Text.translatable("filled_map.scale", 1 << scale).formatted(Formatting.GRAY));
-                tooltip.add(Text.translatable("filled_map.level", scale, 4).formatted(Formatting.GRAY));
+                tooltip.accept(Text.translatable("filled_map.scale", 1 << scale).formatted(Formatting.GRAY));
+                tooltip.accept(Text.translatable("filled_map.level", scale, 4).formatted(Formatting.GRAY));
             }
             else
             {
-                tooltip.add(Text.literal("Add map to set zoom level").formatted(Formatting.GRAY));
+                tooltip.accept(Text.literal("Add map to set zoom level").formatted(Formatting.GRAY));
             }
         }
     }
-    public static Text getIdText(int[] ids) {
+    public static Text getIdText(List<Integer> ids) {
         MutableText result = Text.empty();
         for (int id : ids) {
             if (!result.equals(Text.empty())) result.append(Text.literal(", ")).formatted(Formatting.GRAY);
@@ -368,29 +369,21 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
     public static @Nullable Vector2i getCurrentMapCenter(ItemStack stack)
     {
-        if (!getAtlasInfo(stack).contains("current_map_center")) return null;
-        int[] arr = getAtlasInfo(stack).getIntArray("current_map_center");
-        return new Vector2i(arr[0], arr[1]);
+        ChunkPos chunkPosBecauseISuckAtCodex = getAtlasInfo(stack).currentMapCenter().orElse(null);
+        return chunkPosBecauseISuckAtCodex == null ? null : new Vector2i(chunkPosBecauseISuckAtCodex.x, chunkPosBecauseISuckAtCodex.z);
     }
     public static @Nullable RegistryKey<World> getCurrentMapWorld(ItemStack stack) {
-        if (!getAtlasInfo(stack).contains("current_map_world")) return null;
-        return World.CODEC
-                .parse(NbtOps.INSTANCE, getAtlasInfo(stack).get("current_map_world"))
-                .result()
-                .orElse(World.OVERWORLD);
+        return getAtlasInfo(stack).currentMapWorld().orElse(null);
     }
-    public static void setCurrentMapCenter(ItemStack stack, Vector2i value)
+    public static void setCurrentMapCenter(ItemStack stack, ChunkPos value)
     {
-        int[] arr = new int[]{value.x,value.y};
-        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putIntArray("current_map_center", arr)));
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),Optional.of(value),oldAtlasInfo.currentMapWorld()));
     }
     public static void setCurrentMapWorld(ItemStack stack, RegistryKey<World> world)
     {
-        Identifier.CODEC
-                .encodeStart(NbtOps.INSTANCE, world.getValue())
-                .result()
-                .ifPresent(encoded -> stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").put("current_map_world", encoded))));
-
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),Optional.of(world)));
     }
 
     public void addEmptyMap(ItemStack stack) {
@@ -399,16 +392,15 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public int getEmptyMaps(ItemStack stack)
     {
-        if (!getAtlasInfo(stack).contains("empty_maps")) setEmptyMaps(stack, 0);
-        return getAtlasInfo(stack).getInt("empty_maps");
+        return getAtlasInfo(stack).emptyMaps();
     }
     public void setEmptyMaps(ItemStack stack, int value)
     {
-        stack.apply(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT, comp -> comp.apply(currentNbt -> currentNbt.getCompound("atlas_info").putInt("empty_maps", value)));
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), value, oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(), oldAtlasInfo.currentMapWorld()));
     }
-    public byte getScale(ItemStack stack)
-    {
-        return getAtlasInfo(stack).getByte("scale");
+    public byte getScale(ItemStack stack) {
+        return getAtlasInfo(stack).scale();
     }
 
     private void playRemoveOneSound(Entity entity) {

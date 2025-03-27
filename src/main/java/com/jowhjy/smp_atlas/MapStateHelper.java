@@ -20,6 +20,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.item.map.MapState;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.*;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
@@ -215,7 +216,7 @@ public class MapStateHelper {
     }
 
     //unfinished, it was basically the plan to do zoomIn on all four parts at once
-    public static List<ItemStack> splitMapState(ItemStack map, World world) {
+    public static List<ItemStack> splitMapState(ItemStack map, ServerWorld world) {
         ArrayList<ItemStack> result = new ArrayList<>();
         MapState[] mapStates = new MapState[4];
 
