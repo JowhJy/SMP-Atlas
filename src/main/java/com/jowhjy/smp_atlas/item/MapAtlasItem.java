@@ -129,8 +129,8 @@ public class MapAtlasItem extends Item implements PolymerItem {
         for (int map_id : mapIDs)
         {
             MapIdComponent comp = new MapIdComponent(map_id);
-            MapState mapState = FilledMapItem.getMapState(comp, player.getServerWorld());
-            if (MapStateHelper.isCorrectMapState(mapState, requiredCenterPos, player.getServerWorld().getRegistryKey())) {
+            MapState mapState = FilledMapItem.getMapState(comp, player.getWorld());
+            if (MapStateHelper.isCorrectMapState(mapState, requiredCenterPos, player.getWorld().getRegistryKey())) {
                 return Optional.of(new Pair<>(mapState, comp));
             }
         }
@@ -147,7 +147,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public void inventoryTick(ItemStack stack, ServerWorld world, Entity entity, @Nullable EquipmentSlot slot)
     {
         //todo: optimize further by storing the maps in a sensible way?
-        if (slot != null && entity instanceof ServerPlayerEntity player && (player.getInventory().getSelectedSlot() == slot.getEntitySlotId() || player.getOffHandStack().equals(stack)) && !world.isClient)
+        if (entity instanceof ServerPlayerEntity player && (slot == EquipmentSlot.MAINHAND || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
 
             if (!player.getPlayerInput().sneak() && !(mapOffset.x == 0 && mapOffset.y == 0)) {
@@ -169,7 +169,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
             if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getRight()))) {
                 stack.set(DataComponentTypes.MAP_ID, currentMap.get().getRight());
-                ((ServerWorld)world).playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
+                world.playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
             }
             else if (currentMap.isEmpty()) {
                 MapState unknownMapState = world.getMapState(new MapIdComponent(-1));
@@ -242,32 +242,28 @@ public class MapAtlasItem extends Item implements PolymerItem {
     @Override
     public boolean onClicked(ItemStack stack, ItemStack otherStack, Slot slot, ClickType clickType, PlayerEntity player, StackReference cursorStackReference) {
         if (clickType == ClickType.RIGHT && slot.canTakePartial(player)) {
-            NbtComponent customDataComponent = stack.get(DataComponentTypes.CUSTOM_DATA);
-            if (customDataComponent == null) {
-                return false;
+            NbtComponent customDataComponent = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT);
 
-            } else {
-                if (otherStack.isEmpty()) {
-                    ItemStack itemStack = removeCurrentMap(stack);
-                    if (itemStack != null) {
-                        this.playRemoveOneSound(player);
-                        cursorStackReference.set(itemStack);
-                    }
-                } else if (otherStack.isOf(Items.FILLED_MAP) && canAdd(stack, otherStack, player.getWorld())) {
-                    MapIdComponent mapIdComponent = otherStack.remove(DataComponentTypes.MAP_ID);
-                    MapState state = FilledMapItem.getMapState(mapIdComponent, player.getWorld());
-                    tryAddMap(mapIdComponent, stack, Objects.requireNonNull(state).scale);
-                    otherStack.decrement(1);
-                    this.playInsertSound(player);
+            if (otherStack.isEmpty()) {
+                ItemStack itemStack = removeCurrentMap(stack);
+                if (itemStack != null) {
+                    this.playRemoveOneSound(player);
+                    cursorStackReference.set(itemStack);
                 }
-                else if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
-                    addEmptyMap(stack);
-                    otherStack.decrement(1);
-                }
-
-                return true;
+            } else if (otherStack.isOf(Items.FILLED_MAP) && canAdd(stack, otherStack, player.getWorld())) {
+                MapIdComponent mapIdComponent = otherStack.remove(DataComponentTypes.MAP_ID);
+                MapState state = FilledMapItem.getMapState(mapIdComponent, player.getWorld());
+                tryAddMap(mapIdComponent, stack, Objects.requireNonNull(state).scale);
+                otherStack.decrement(1);
+                this.playInsertSound(player);
+            } else if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
+                addEmptyMap(stack);
+                otherStack.decrement(1);
             }
-        } else {
+
+            return true;
+        }
+        else {
             return false;
         }
     }

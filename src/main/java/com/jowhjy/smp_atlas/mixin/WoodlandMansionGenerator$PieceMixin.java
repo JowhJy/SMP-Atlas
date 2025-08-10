@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(targets = "net.minecraft.structure.WoodlandMansionGenerator$Piece")
+@Mixin(WoodlandMansionGenerator.Piece.class)
 public abstract class WoodlandMansionGenerator$PieceMixin extends SimpleStructurePiece {
     public WoodlandMansionGenerator$PieceMixin(StructurePieceType type, int length, StructureTemplateManager structureTemplateManager, Identifier id, String template, StructurePlacementData placementData, BlockPos pos) {
         super(type, length, structureTemplateManager, id, template, placementData, pos);
