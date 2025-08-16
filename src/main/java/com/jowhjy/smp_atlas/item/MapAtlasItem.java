@@ -37,7 +37,6 @@ import java.util.function.Consumer;
 public class MapAtlasItem extends Item implements PolymerItem {
 
     private static final int MAX_MAPS = 64;
-    private Vector2i mapOffset = new Vector2i(0,0);
 
     public MapAtlasItem(Settings settings) {
         super(settings);
@@ -54,6 +53,9 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     @Override
     public ActionResult use(World world, PlayerEntity user, Hand hand) {
+        ItemStack stack = user.getStackInHand(hand);
+        ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
+        Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
         if (user instanceof ServerPlayerEntity player) {
             if (player.getPlayerInput().sneak()) {
                 if (player.getPlayerInput().forward()) {
@@ -74,6 +76,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
                 else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
                 else if (mapOffset.y == 0) offsetMessage.append(" 0");
+                setOffset(stack, new ChunkPos(mapOffset.x, mapOffset.y));
                 user.sendMessage(offsetMessage, true);
                 return ActionResult.SUCCESS;
             }
@@ -107,9 +110,11 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
     {
-        byte scale = getAtlasInfo(stack).scale();
+        AtlasInfo atlasInfo = getAtlasInfo(stack);
+        byte scale = atlasInfo.scale();
+        ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0,0));
         if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
-        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.y * (8 << scale)) + player.getChunkPos().z);
+        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.z * (8 << scale)) + player.getChunkPos().z);
         Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
         MapState currentMapState = getCurrentMapState(stack, player.getWorld());
 
@@ -149,10 +154,11 @@ public class MapAtlasItem extends Item implements PolymerItem {
         //todo: optimize further by storing the maps in a sensible way?
         if (entity instanceof ServerPlayerEntity player && (slot == EquipmentSlot.MAINHAND || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
+            AtlasInfo atlasInfo = getAtlasInfo(stack);
 
-            if (!player.getPlayerInput().sneak() && !(mapOffset.x == 0 && mapOffset.y == 0)) {
+            if (!player.getPlayerInput().sneak() && atlasInfo.offset().isPresent()) {
 
-                mapOffset.zero();
+                clearOffset(stack);
                 player.sendMessage(Text.of("Offset: 0"),true);
             }
 
@@ -181,14 +187,17 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public void tryMakeNewMap(ItemStack stack, ServerWorld world, ServerPlayerEntity entity)
     {
+
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+
+
         int emptyMaps = oldAtlasInfo.emptyMaps();
 
-        if (emptyMaps > 0)
+        if (emptyMaps > 0 && oldAtlasInfo.offset().isEmpty())
         {
             //default to scale 1 if unset (because it was empty before)
             if (oldAtlasInfo.scale() == -1) {
-                setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)1,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld()));
+                setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)1,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
             }
 
             setEmptyMaps(stack,emptyMaps - 1);
@@ -200,7 +209,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public static AtlasInfo getAtlasInfo(ItemStack stack)
     {
-        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElseGet(() -> new AtlasInfo(List.of(), 0, (byte) -1, Optional.empty(), Optional.empty()));
+        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElseGet(() -> new AtlasInfo(List.of(), 0, (byte) -1, Optional.empty(), Optional.empty(), Optional.empty()));
     }
     public static void setAtlasInfo(ItemStack stack, AtlasInfo atlasInfo) {
         stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.put("atlas_info",AtlasInfo.CODEC, atlasInfo)));
@@ -216,11 +225,22 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
             HashSet<Integer> mapIDs = new HashSet<>(oldAtlasInfo.mapIDs());
             mapIDs.add(mapIdComponent.id());
-            setAtlasInfo(stack, new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), scale,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld())); //update the info to the new list and possibly new scale
+            setAtlasInfo(stack, new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), scale,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset())); //update the info to the new list and possibly new scale
         }
 
         stack.remove(DataComponentTypes.MAP_ID);
 
+    }
+
+    public void setOffset(ItemStack stack, ChunkPos offset)
+    {
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), Optional.of(offset))); //update the info to the new list and possibly new scale
+    }
+    public void clearOffset(ItemStack stack)
+    {
+        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), Optional.empty())); //update the info to the new list and possibly new scale
     }
 
     @Override
@@ -289,11 +309,11 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
         mapIDs.remove(mapID);
 
-        oldAtlasInfo = new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld());
+        oldAtlasInfo = new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset());
         setAtlasInfo(stack, oldAtlasInfo);
 
         //scale back to unset if now -1
-        if (mapIDs.isEmpty()) setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)-1, oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld()));
+        if (mapIDs.isEmpty()) setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)-1, oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
 
         stack.remove(DataComponentTypes.MAP_ID);
 
@@ -374,12 +394,12 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public static void setCurrentMapCenter(ItemStack stack, ChunkPos value)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),Optional.of(value),oldAtlasInfo.currentMapWorld()));
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),Optional.of(value),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
     }
     public static void setCurrentMapWorld(ItemStack stack, RegistryKey<World> world)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),Optional.of(world)));
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),Optional.of(world), oldAtlasInfo.offset()));
     }
 
     public void addEmptyMap(ItemStack stack) {
@@ -393,7 +413,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public void setEmptyMaps(ItemStack stack, int value)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), value, oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(), oldAtlasInfo.currentMapWorld()));
+        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), value, oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(), oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
     }
     public byte getScale(ItemStack stack) {
         return getAtlasInfo(stack).scale();
