@@ -1,0 +1,6 @@
+{
+  "item.smp_atlas.map_atlas": "Kaartenatlas",
+  "atlas.smp_atlas.offset": "Verschuiving:",
+  "item.smp_atlas.map_atlas.empty.instructions": "Voeg kaart toe om zoomniveau in te stellen",
+  "item.smp_atlas.map_atlas.empty_maps": "Lege Kaarten: "
+}

@@ -37,6 +37,7 @@ import java.util.function.Consumer;
 public class MapAtlasItem extends Item implements PolymerItem {
 
     private static final int MAX_MAPS = 64;
+    private static final int MAX_OFFSET = 5;
 
     public MapAtlasItem(Settings settings) {
         super(settings);
@@ -53,32 +54,40 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     @Override
     public ActionResult use(World world, PlayerEntity user, Hand hand) {
-        ItemStack stack = user.getStackInHand(hand);
-        ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
-        Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
         if (user instanceof ServerPlayerEntity player) {
+            ItemStack stack = user.getStackInHand(hand);
+            //use while sneaking: change offset
             if (player.getPlayerInput().sneak()) {
+                ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
+                Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
                 if (player.getPlayerInput().forward()) {
-                    mapOffset.y -= 1;
+                    mapOffset.y = Math.max(mapOffset.y - 1, -MAX_OFFSET);
                 }
                 if (player.getPlayerInput().backward()) {
-                    mapOffset.y += 1;
+                    mapOffset.y = Math.min(mapOffset.y + 1, MAX_OFFSET);
                 }
                 if (player.getPlayerInput().left()) {
-                    mapOffset.x -= 1;
+                    mapOffset.x = Math.max(mapOffset.x - 1, -MAX_OFFSET);
                 }
                 if (player.getPlayerInput().right()) {
-                    mapOffset.x += 1;
+                    mapOffset.x = Math.min(mapOffset.x + 1, MAX_OFFSET);
                 }
-                MutableText offsetMessage = Text.literal("Offset:");
+                MutableText offsetMessage = Text.translatable("atlas.smp_atlas.offset");
                 if (mapOffset.y > 0) offsetMessage.append(" ↓" + mapOffset.y);
                 else if (mapOffset.y < 0) offsetMessage.append(" ↑" + -mapOffset.y);
                 if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
                 else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
                 else if (mapOffset.y == 0) offsetMessage.append(" 0");
-                setOffset(stack, new ChunkPos(mapOffset.x, mapOffset.y));
+                ChunkPos newMapOffset = new ChunkPos(mapOffset.x, mapOffset.y);
                 user.sendMessage(offsetMessage, true);
-                return ActionResult.SUCCESS;
+                if (!newMapOffset.equals(oldMapOffset)) {
+                    setOffset(stack, newMapOffset);
+                    return ActionResult.SUCCESS;
+                }
+            }
+            //use if no current map and not sneaking: make new map
+            else if (stack.get(DataComponentTypes.MAP_ID) == null) {
+                tryMakeNewMap(stack, (ServerWorld) world, player);
             }
         }
         return ActionResult.PASS;
@@ -95,7 +104,6 @@ public class MapAtlasItem extends Item implements PolymerItem {
         ItemStack out = PolymerItemUtils.createItemStack(itemStack, context);
         itemStack.copyComponentsToNewStack(out.getItem(), itemStack.getCount());
         out.set(DataComponentTypes.MAP_ID, new MapIdComponent(getCurrentMapId(itemStack)));
-        out.set(DataComponentTypes.ITEM_NAME, (Text.literal("Map Atlas").setStyle((Style.EMPTY).withItalic(false))));
         out.apply(DataComponentTypes.TOOLTIP_DISPLAY, TooltipDisplayComponent.DEFAULT, comp -> comp.with(DataComponentTypes.MAP_ID, true));
         List<Text> tooltip = Lists.newArrayList();
         appendTooltip(itemStack, null, itemStack.get(DataComponentTypes.TOOLTIP_DISPLAY), tooltip::add, TooltipType.ADVANCED); //the given TooltipType is always basic for some reason, polymer doesn't properly get it from the player
@@ -156,27 +164,29 @@ public class MapAtlasItem extends Item implements PolymerItem {
         {
             AtlasInfo atlasInfo = getAtlasInfo(stack);
 
+            //if there is an offset but player is no longer sneaking, remove offset
             if (!player.getPlayerInput().sneak() && atlasInfo.offset().isPresent()) {
 
                 clearOffset(stack);
-                player.sendMessage(Text.of("Offset: 0"),true);
+                player.sendMessage(Text.translatable("atlas.smp_atlas.offset").append(" 0"),true);
             }
 
             var prevMapID = stack.get(DataComponentTypes.MAP_ID);
             Optional<Pair<MapState, MapIdComponent>> currentMap = getMapWithPlayer(player, stack);
 
-
-
+            //is there a map with the player? update it. otherwise remove map id component (is spammed)
             currentMap.ifPresentOrElse(pair -> {
                         pair.getLeft().update(player, stack);
                         MapStateHelper.updateColors(world, entity, pair.getLeft());
                     },
-                    () -> tryMakeNewMap(stack, world, player));
+                    () -> stack.remove(DataComponentTypes.MAP_ID));
 
+            //if there is a map with the player but it does not equal the existing map id component, we switched maps and should change map id component
             if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getRight()))) {
                 stack.set(DataComponentTypes.MAP_ID, currentMap.get().getRight());
                 world.playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
             }
+            //if no current map, we show the question mark map
             else if (currentMap.isEmpty()) {
                 MapState unknownMapState = world.getMapState(new MapIdComponent(-1));
                 //TODO would be nice if the mod initialized the unknown map by itself!
@@ -187,9 +197,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public void tryMakeNewMap(ItemStack stack, ServerWorld world, ServerPlayerEntity entity)
     {
-
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-
 
         int emptyMaps = oldAtlasInfo.emptyMaps();
 
@@ -204,7 +212,6 @@ public class MapAtlasItem extends Item implements PolymerItem {
             ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
             this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), stack, getScale(stack));
         }
-        else stack.remove(DataComponentTypes.MAP_ID);
     }
 
     public static AtlasInfo getAtlasInfo(ItemStack stack)
@@ -262,7 +269,6 @@ public class MapAtlasItem extends Item implements PolymerItem {
     @Override
     public boolean onClicked(ItemStack stack, ItemStack otherStack, Slot slot, ClickType clickType, PlayerEntity player, StackReference cursorStackReference) {
         if (clickType == ClickType.RIGHT && slot.canTakePartial(player)) {
-            NbtComponent customDataComponent = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT);
 
             if (otherStack.isEmpty()) {
                 ItemStack itemStack = removeCurrentMap(stack);
@@ -349,7 +355,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
             int emptyMaps = atlasInfo.emptyMaps();
             int i = mapPostProcessingComponent == MapPostProcessingComponent.SCALE ? 1 : 0;
-            tooltip.accept(Text.literal("Empty Maps: " + (emptyMaps + i)).formatted(Formatting.GRAY));
+            tooltip.accept((Text.translatable("item.smp_atlas.map_atlas.empty_maps").append(Text.literal(String.valueOf(emptyMaps + i))).formatted(Formatting.GRAY)));
 
             int scale = Math.min(atlasInfo.scale(), 4);
             if (scale != -1) {
@@ -358,7 +364,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             }
             else
             {
-                tooltip.accept(Text.literal("Add map to set zoom level").formatted(Formatting.GRAY));
+                tooltip.accept(Text.translatable("item.smp_atlas.map_atlas.empty.instructions").formatted(Formatting.GRAY));
             }
         }
     }

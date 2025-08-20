@@ -1,0 +1,6 @@
+{
+  "item.smp_atlas.map_atlas": "Kartatlas",
+  "atlas.smp_atlas.offset": "Forskyvning:",
+  "item.smp_atlas.map_atlas.empty.instructions": "Legg til kart for å sette zoomnivå",
+  "item.smp_atlas.map_atlas.empty_maps": "Tomme Kart: "
+}

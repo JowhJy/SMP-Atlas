@@ -1,3 +1,6 @@
 {
-  "item.smp_atlas.map_atlas": "Map Atlas"
+  "item.smp_atlas.map_atlas": "Map Atlas",
+  "atlas.smp_atlas.offset": "Offset:",
+  "item.smp_atlas.map_atlas.empty.instructions": "Add map to set zoom level",
+  "item.smp_atlas.map_atlas.empty_maps": "Empty Maps: "
 }
