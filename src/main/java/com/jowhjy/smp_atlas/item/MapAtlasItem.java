@@ -5,6 +5,7 @@ import com.jowhjy.smp_atlas.AtlasInfo;
 import com.jowhjy.smp_atlas.MapStateHelper;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
+import net.minecraft.block.BlockState;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.*;
 import net.minecraft.entity.Entity;
@@ -16,6 +17,7 @@ import net.minecraft.item.map.MapState;
 import net.minecraft.item.tooltip.TooltipType;
 import net.minecraft.network.packet.s2c.play.MapUpdateS2CPacket;
 import net.minecraft.registry.*;
+import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -435,5 +437,18 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     private void playDropContentsSound(Entity entity) {
         entity.playSound(SoundEvents.ITEM_BUNDLE_DROP_CONTENTS, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
+    }
+
+    @Override
+    public ActionResult useOnBlock(ItemUsageContext context) {
+        BlockState blockState = context.getWorld().getBlockState(context.getBlockPos());
+        if (blockState.isIn(BlockTags.BANNERS)) {
+            MapState mapState;
+            if (!context.getWorld().isClient && (mapState = FilledMapItem.getMapState(context.getStack(), context.getWorld())) != null && !mapState.addBanner(context.getWorld(), context.getBlockPos())) {
+                return ActionResult.FAIL;
+            }
+            return ActionResult.SUCCESS;
+        }
+        return super.useOnBlock(context);
     }
 }
