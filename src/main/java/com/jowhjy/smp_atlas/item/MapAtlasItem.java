@@ -24,10 +24,11 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.MutableText;
-import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.*;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.GlobalPos;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
@@ -38,8 +39,8 @@ import java.util.function.Consumer;
 
 public class MapAtlasItem extends Item implements PolymerItem {
 
-    private static final int MAX_MAPS = 64;
-    private static final int MAX_OFFSET = 5;
+    public static final int MAX_MAPS = 64;
+    public static final int MAX_OFFSET = 5;
 
     public MapAtlasItem(Settings settings) {
         super(settings);
@@ -61,6 +62,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             //use while sneaking: change offset
             if (player.getPlayerInput().sneak()) {
                 ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
+                Vector2i oldMapOffsetAsVector = new Vector2i(oldMapOffset.x, oldMapOffset.z);
                 Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
                 if (player.getPlayerInput().forward()) {
                     mapOffset.y = Math.max(mapOffset.y - 1, -MAX_OFFSET);
@@ -80,10 +82,9 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
                 else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
                 else if (mapOffset.y == 0) offsetMessage.append(" 0");
-                ChunkPos newMapOffset = new ChunkPos(mapOffset.x, mapOffset.y);
                 user.sendMessage(offsetMessage, true);
-                if (!newMapOffset.equals(oldMapOffset)) {
-                    setOffset(stack, newMapOffset);
+                if (!mapOffset.equals(oldMapOffsetAsVector)) {
+                    setOffset(stack, mapOffset);
                     return ActionResult.SUCCESS;
                 }
             }
@@ -118,11 +119,10 @@ public class MapAtlasItem extends Item implements PolymerItem {
         return PolymerItem.super.getPolymerItemModel(stack, context);
     }
 
-    public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack)
-    {
+    public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack) {
         AtlasInfo atlasInfo = getAtlasInfo(stack);
         byte scale = atlasInfo.scale();
-        ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0,0));
+        ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0, 0));
         if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
         ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.z * (8 << scale)) + player.getChunkPos().z);
         Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
@@ -133,22 +133,23 @@ public class MapAtlasItem extends Item implements PolymerItem {
             return Optional.of(new Pair<>(currentMapState, stack.get(DataComponentTypes.MAP_ID)));
         }
 
-        setCurrentMapCenter(stack, new ChunkPos(requiredCenterPos.x,requiredCenterPos.y));
-        setCurrentMapWorld(stack, player.getWorld().getRegistryKey());
+        atlasInfo = new AtlasInfo.Builder(atlasInfo).withCurrentMapInfo(requiredCenterPos, player.getWorld().getRegistryKey()).build();
+        setAtlasInfo(stack, atlasInfo);
 
-        //this checks all the maps in the atlas
-        //TODO: optimize for loop? we would do this by storing the maps in a better data structure than a simple array i think
-        var mapIDs = getAtlasInfo(stack).mapIDs();
+        var mapLocations = getAtlasInfo(stack).mapLocations();
+
+        var requiredGlobalPos = new GlobalPos(player.getWorld().getRegistryKey(), new BlockPos(requiredCenterPos.x, 0, requiredCenterPos.y));
 
 
-        for (int map_id : mapIDs)
-        {
+        Integer map_id = mapLocations.get(requiredGlobalPos);
+
+        if (map_id != null) {
             MapIdComponent comp = new MapIdComponent(map_id);
             MapState mapState = FilledMapItem.getMapState(comp, player.getWorld());
-            if (MapStateHelper.isCorrectMapState(mapState, requiredCenterPos, player.getWorld().getRegistryKey())) {
-                return Optional.of(new Pair<>(mapState, comp));
-            }
+            setAtlasInfo(stack, new AtlasInfo.Builder(atlasInfo).moveToFront(map_id).build());
+            return Optional.of(new Pair<>(mapState, comp));
         }
+
         return Optional.empty();
     }
 
@@ -161,7 +162,6 @@ public class MapAtlasItem extends Item implements PolymerItem {
     @Override
     public void inventoryTick(ItemStack stack, ServerWorld world, Entity entity, @Nullable EquipmentSlot slot)
     {
-        //todo: optimize further by storing the maps in a sensible way?
         if (entity instanceof ServerPlayerEntity player && (slot == EquipmentSlot.MAINHAND || player.getOffHandStack().equals(stack)) && !world.isClient)
         {
             AtlasInfo atlasInfo = getAtlasInfo(stack);
@@ -207,49 +207,49 @@ public class MapAtlasItem extends Item implements PolymerItem {
         {
             //default to scale 1 if unset (because it was empty before)
             if (oldAtlasInfo.scale() == -1) {
-                setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)1,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
+                setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).withScale((byte) 1).build());
             }
 
             setEmptyMaps(stack,emptyMaps - 1);
             ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
-            this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), stack, getScale(stack));
+            this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), world, stack, getScale(stack));
         }
+        else playInsertFailSound(entity);
     }
 
     public static AtlasInfo getAtlasInfo(ItemStack stack)
     {
-        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElseGet(() -> new AtlasInfo(List.of(), 0, (byte) -1, Optional.empty(), Optional.empty(), Optional.empty()));
+        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElse(AtlasInfo.DEFAULT);
     }
     public static void setAtlasInfo(ItemStack stack, AtlasInfo atlasInfo) {
         stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.put("atlas_info",AtlasInfo.CODEC, atlasInfo)));
     }
 
-    public void tryAddMap(MapIdComponent mapIdComponent, ItemStack stack, byte scale) {
+    public void tryAddMap(MapIdComponent mapIdComponent, World world, ItemStack stack, byte scale) {
 
         if (mapIdComponent == null) return;
 
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        if (oldAtlasInfo.scale() == -1 ||  // any scale if it was unset
+        if (oldAtlasInfo.scale() == -1 ||  // any scale is fine if it was unset previously
             oldAtlasInfo.scale() == scale) { //otherwise you can only add maps of the correct scale
 
-            HashSet<Integer> mapIDs = new HashSet<>(oldAtlasInfo.mapIDs());
-            mapIDs.add(mapIdComponent.id());
-            setAtlasInfo(stack, new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), scale,oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset())); //update the info to the new list and possibly new scale
+            MapState mapState = FilledMapItem.getMapState(mapIdComponent, world);
+            setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).withScale(scale).addMap(mapIdComponent.id(), mapState).build()); //update the info to the new list and possibly new scale
         }
 
         stack.remove(DataComponentTypes.MAP_ID);
 
     }
 
-    public void setOffset(ItemStack stack, ChunkPos offset)
+    public void setOffset(ItemStack stack, Vector2i offset)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), Optional.of(offset))); //update the info to the new list and possibly new scale
+        setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).withOffset(offset).build()); //update the info to the new list and possibly new scale
     }
     public void clearOffset(ItemStack stack)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), Optional.empty())); //update the info to the new list and possibly new scale
+        setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).clearOffset().build()); //update the info to the new list and possibly new scale
     }
 
     @Override
@@ -259,7 +259,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
         if (mapIdComponent != null) {
             MapState state = FilledMapItem.getMapState(mapIdComponent, world);
-            if (state != null) ((MapAtlasItem) stack.getItem()).tryAddMap(mapIdComponent, stack, state.scale);
+            if (state != null) ((MapAtlasItem) stack.getItem()).tryAddMap(mapIdComponent, world, stack, state.scale);
             stack.remove(DataComponentTypes.MAP_ID);
         }
         if (mapPostProcessingComponent == MapPostProcessingComponent.SCALE)
@@ -270,27 +270,37 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     @Override
     public boolean onClicked(ItemStack stack, ItemStack otherStack, Slot slot, ClickType clickType, PlayerEntity player, StackReference cursorStackReference) {
-        if (clickType == ClickType.RIGHT && slot.canTakePartial(player)) {
-
-            if (otherStack.isEmpty()) {
-                ItemStack itemStack = removeCurrentMap(stack);
-                if (itemStack != null) {
-                    this.playRemoveOneSound(player);
-                    cursorStackReference.set(itemStack);
+        if (clickType == ClickType.LEFT && slot.canTakePartial(player)) {
+            if (otherStack.isOf(Items.FILLED_MAP)) {
+                if (canAdd(stack, otherStack, player.getWorld())) {
+                    MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
+                    MapState state = FilledMapItem.getMapState(mapIdComponent, player.getWorld());
+                    tryAddMap(mapIdComponent, player.getWorld(), stack, Objects.requireNonNull(state).scale);
+                    otherStack.decrement(1);
+                    playInsertSound(player);
                 }
-            } else if (otherStack.isOf(Items.FILLED_MAP) && canAdd(stack, otherStack, player.getWorld())) {
-                MapIdComponent mapIdComponent = otherStack.remove(DataComponentTypes.MAP_ID);
-                MapState state = FilledMapItem.getMapState(mapIdComponent, player.getWorld());
-                tryAddMap(mapIdComponent, stack, Objects.requireNonNull(state).scale);
-                otherStack.decrement(1);
-                this.playInsertSound(player);
-            } else if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
+                else playInsertFailSound(player);
+                return true;
+            }
+            if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
                 addEmptyMap(stack);
                 otherStack.decrement(1);
+                return true;
             }
 
+            return false;
+        }
+        else if (clickType == ClickType.RIGHT && slot.canTakePartial(player)) {
+            if (otherStack.isEmpty()) {
+                ItemStack itemStack = removeTopMap(stack, player.getWorld());
+                if (itemStack != null) {
+                    playRemoveOneSound(player);
+                    cursorStackReference.set(itemStack);
+                }
+            }
             return true;
         }
+
         else {
             return false;
         }
@@ -303,30 +313,15 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Nullable
-    private ItemStack removeCurrentMap(ItemStack stack) {
+    private ItemStack removeTopMap(ItemStack stack, World world) {
         int mapID = getCurrentMapId(stack);
-        if (mapID != -1) return tryRemoveMap(stack, mapID);
-        return null;
-    }
-
-    public ItemStack tryRemoveMap(ItemStack stack, int mapID)
-    {
-        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-
-        HashSet<Integer> mapIDs = new HashSet<>(oldAtlasInfo.mapIDs());
-
-        mapIDs.remove(mapID);
-
-        oldAtlasInfo = new AtlasInfo(mapIDs.stream().toList(), oldAtlasInfo.emptyMaps(), oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset());
-        setAtlasInfo(stack, oldAtlasInfo);
-
-        //scale back to unset if now -1
-        if (mapIDs.isEmpty()) setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),(byte)-1, oldAtlasInfo.currentMapCenter(),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
-
-        stack.remove(DataComponentTypes.MAP_ID);
-
-        ItemStack result = new ItemStack(Items.FILLED_MAP);
-        result.set(DataComponentTypes.MAP_ID, new MapIdComponent(mapID));
+        if (mapID != -1) { //if the top map was a map currently being showed, we stop showing anything
+            stack.remove(DataComponentTypes.MAP_ID);
+        }
+        AtlasInfo atlasInfo = getAtlasInfo(stack);
+        AtlasInfo.Builder atlasInfoBuilder = new AtlasInfo.Builder(atlasInfo);
+        ItemStack result = atlasInfoBuilder.removeTopMap(world);
+        if (result != null) setAtlasInfo(stack, atlasInfoBuilder.build());
         return result;
     }
 
@@ -372,9 +367,16 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
     public static Text getIdText(List<Integer> ids) {
         MutableText result = Text.empty();
+        int count = 0;
         for (int id : ids) {
+            if (count == 5) {
+                result.append(" + " + (ids.size() - 5));
+                break;
+            }
+
             if (!result.equals(Text.empty())) result.append(Text.literal(", ")).formatted(Formatting.GRAY);
             result.append(Text.translatable("filled_map.id", id).formatted(Formatting.GRAY));
+            count++;
         }
 
         return result;
@@ -399,16 +401,6 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public static @Nullable RegistryKey<World> getCurrentMapWorld(ItemStack stack) {
         return getAtlasInfo(stack).currentMapWorld().orElse(null);
     }
-    public static void setCurrentMapCenter(ItemStack stack, ChunkPos value)
-    {
-        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),Optional.of(value),oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
-    }
-    public static void setCurrentMapWorld(ItemStack stack, RegistryKey<World> world)
-    {
-        AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(),oldAtlasInfo.emptyMaps(),oldAtlasInfo.scale(),oldAtlasInfo.currentMapCenter(),Optional.of(world), oldAtlasInfo.offset()));
-    }
 
     public void addEmptyMap(ItemStack stack) {
         setEmptyMaps(stack, getEmptyMaps(stack) + 1);
@@ -421,21 +413,25 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public void setEmptyMaps(ItemStack stack, int value)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
-        setAtlasInfo(stack, new AtlasInfo(oldAtlasInfo.mapIDs(), value, oldAtlasInfo.scale(), oldAtlasInfo.currentMapCenter(), oldAtlasInfo.currentMapWorld(), oldAtlasInfo.offset()));
+        setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).withEmptyMaps(value).build());
     }
     public byte getScale(ItemStack stack) {
         return getAtlasInfo(stack).scale();
     }
 
-    private void playRemoveOneSound(Entity entity) {
+    private static void playRemoveOneSound(Entity entity) {
         entity.playSound(SoundEvents.ITEM_BUNDLE_REMOVE_ONE, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
     }
 
-    private void playInsertSound(Entity entity) {
+    private static void playInsertSound(Entity entity) {
         entity.playSound(SoundEvents.ITEM_BUNDLE_INSERT, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
     }
 
-    private void playDropContentsSound(Entity entity) {
+    private static void playInsertFailSound(Entity entity) {
+        entity.playSound(SoundEvents.ITEM_BUNDLE_INSERT_FAIL, 1.0f, 1.0f);
+    }
+
+    private static void playDropContentsSound(Entity entity) {
         entity.playSound(SoundEvents.ITEM_BUNDLE_DROP_CONTENTS, 0.8F, 0.8F + entity.getWorld().getRandom().nextFloat() * 0.4F);
     }
 
