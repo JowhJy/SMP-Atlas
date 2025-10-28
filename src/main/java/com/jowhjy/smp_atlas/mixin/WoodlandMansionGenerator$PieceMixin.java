@@ -23,7 +23,7 @@ public abstract class WoodlandMansionGenerator$PieceMixin extends SimpleStructur
     }
 
     @Inject(at = @At("HEAD"), method = "handleMetadata")
-    public void juhc$handleBookshelfMetadata(String metadata, BlockPos pos, ServerWorldAccess world, Random random, BlockBox boundingBox, CallbackInfo ci) {
+    public void smp_atlas$handleBookshelfMetadata(String metadata, BlockPos pos, ServerWorldAccess world, Random random, BlockBox boundingBox, CallbackInfo ci) {
         if (metadata.startsWith("MapAtlasBookshelf")) {
             BlockRotation blockRotation = this.placementData.getRotation();
             BlockState blockState = Blocks.CHISELED_BOOKSHELF.getDefaultState();

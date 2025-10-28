@@ -49,10 +49,9 @@ public abstract class StrongholdGeneratorLibraryMixin extends StructurePiece {
             world.setBlockState(pos, state, Block.NOTIFY_LISTENERS);
             BlockEntity blockEntity = world.getBlockEntity(pos);
             if (blockEntity instanceof ChiseledBookshelfBlockEntity chiseledBookshelfBlockEntity) {
-                IChiseledBookshelfBlockEntityAccessor access = ((IChiseledBookshelfBlockEntityAccessor)chiseledBookshelfBlockEntity);
-                DefaultedList<ItemStack> inv = access.getInventory();
+                DefaultedList<ItemStack> inv = chiseledBookshelfBlockEntity.getHeldStacks();
                 inv.set(random.nextInt(6), new ItemStack(SMPAtlas.MAP_ATLAS));
-                ((IChiseledBookshelfBlockEntityMixin)chiseledBookshelfBlockEntity).juhc$updateStateWithoutBeingAnnoyingAboutIt(state, world);
+                ((IChiseledBookshelfBlockEntityMixin)chiseledBookshelfBlockEntity).smp_atlas$updateStateWithoutBeingAnnoyingAboutIt(state, world);
             }
         }
 

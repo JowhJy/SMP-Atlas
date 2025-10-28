@@ -34,7 +34,7 @@ import java.util.List;
 public class MapStateHelper {
     public static boolean mapStateContainsPlayer(MapState mapState, PlayerEntity player)
     {
-        if (mapState == null || mapState.dimension != player.getWorld().getRegistryKey()) return false;
+        if (mapState == null || mapState.dimension != player.getEntityWorld().getRegistryKey()) return false;
 
         //ripped from the filledmapitem.updatecolors method
         int scale = 1 << mapState.scale;

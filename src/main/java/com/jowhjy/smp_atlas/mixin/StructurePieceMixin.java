@@ -45,11 +45,10 @@ public class StructurePieceMixin implements IStructurePieceMixin {
 
             world.setBlockState(pos, block, Block.NOTIFY_LISTENERS);
             BlockEntity blockEntity = world.getBlockEntity(pos);
-            if (blockEntity instanceof ChiseledBookshelfBlockEntity) {
-                IChiseledBookshelfBlockEntityAccessor access = ((IChiseledBookshelfBlockEntityAccessor) blockEntity);
-                DefaultedList<ItemStack> inv = access.getInventory();
+            if (blockEntity instanceof ChiseledBookshelfBlockEntity chiseledBookshelfBlockEntity) {
+                DefaultedList<ItemStack> inv = chiseledBookshelfBlockEntity.getHeldStacks();
                 inv.set(random.nextInt(6), new ItemStack(SMPAtlas.MAP_ATLAS));
-                ((IChiseledBookshelfBlockEntityMixin) blockEntity).juhc$updateStateWithoutBeingAnnoyingAboutIt(block, (StructureWorldAccess) world);
+                ((IChiseledBookshelfBlockEntityMixin) blockEntity).smp_atlas$updateStateWithoutBeingAnnoyingAboutIt(block, (StructureWorldAccess) world);
             }
             return true;
         } else {

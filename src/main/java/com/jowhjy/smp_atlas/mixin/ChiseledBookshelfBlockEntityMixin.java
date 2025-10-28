@@ -7,6 +7,7 @@ import net.minecraft.block.ChiseledBookshelfBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.BlockEntityType;
 import net.minecraft.block.entity.ChiseledBookshelfBlockEntity;
+import net.minecraft.inventory.ListInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.state.property.BooleanProperty;
 import net.minecraft.util.math.BlockPos;
@@ -20,17 +21,15 @@ import org.spongepowered.asm.mixin.Unique;
 import java.util.Objects;
 
 @Mixin(ChiseledBookshelfBlockEntity.class)
-public abstract class ChiseledBookshelfBlockEntityMixin extends BlockEntity implements IChiseledBookshelfBlockEntityMixin {
+public abstract class ChiseledBookshelfBlockEntityMixin extends BlockEntity implements IChiseledBookshelfBlockEntityMixin, ListInventory {
 
     public ChiseledBookshelfBlockEntityMixin(BlockEntityType<?> type, BlockPos pos, BlockState state) {
         super(type, pos, state);
     }
 
-    @Shadow public abstract ItemStack getStack(int slot);
-
     @Unique
     @Override
-    public void juhc$updateStateWithoutBeingAnnoyingAboutIt(BlockState blockState, StructureWorldAccess world) {
+    public void smp_atlas$updateStateWithoutBeingAnnoyingAboutIt(BlockState blockState, StructureWorldAccess world) {
 
         for (int i = 0; i < ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.size(); i++) {
             boolean bl = !this.getStack(i).isEmpty();

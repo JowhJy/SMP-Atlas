@@ -34,7 +34,7 @@ public class CartographyTableScreenHandlerMixin {
     @Shadow @Final private CraftingResultInventory resultInventory;
 
     @ModifyArg(method = "<init>(ILnet/minecraft/entity/player/PlayerInventory;Lnet/minecraft/screen/ScreenHandlerContext;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/screen/CartographyTableScreenHandler;addSlot(Lnet/minecraft/screen/slot/Slot;)Lnet/minecraft/screen/slot/Slot;", ordinal = 0))
-    public Slot juhc$makeSlotAcceptAtlas(Slot par1) {
+    public Slot smp_atlas$makeSlotAcceptAtlas(Slot par1) {
 
         return new Slot(((CartographyTableScreenHandler)(Object)this).inventory, 0, 15, 15) {
             @Override
@@ -45,7 +45,7 @@ public class CartographyTableScreenHandlerMixin {
     }
 
     @ModifyArg(method = "<init>(ILnet/minecraft/entity/player/PlayerInventory;Lnet/minecraft/screen/ScreenHandlerContext;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/screen/CartographyTableScreenHandler;addSlot(Lnet/minecraft/screen/slot/Slot;)Lnet/minecraft/screen/slot/Slot;", ordinal = 1))
-    public Slot juhc$makeSlot2AcceptStuff(Slot par1) {
+    public Slot smp_atlas$makeSlot2AcceptStuff(Slot par1) {
 
         return new Slot(((CartographyTableScreenHandler)(Object)this).inventory, 1, 15, 52) {
             @Override
@@ -57,7 +57,7 @@ public class CartographyTableScreenHandlerMixin {
 
     //todo: complete replace may be non-ideal
     @Inject(method = "updateResult", at = @At("HEAD"), cancellable = true)
-    public void juhc$injectResultUpdate(ItemStack map, ItemStack item, ItemStack oldResult, CallbackInfo ci)
+    public void smp_atlas$injectResultUpdate(ItemStack map, ItemStack item, ItemStack oldResult, CallbackInfo ci)
     {
         var thisCTSH = (CartographyTableScreenHandler)(Object)this;
         if (map.isOf(Items.FILLED_MAP)) this.context.run((world, pos) -> {

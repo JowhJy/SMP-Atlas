@@ -7,7 +7,6 @@
     "CartographyTableScreenHandlerMixin",
     "ChiseledBookshelfBlockEntityMixin",
     "FilledMapItemMixin",
-    "IChiseledBookshelfBlockEntityAccessor",
     "MapStateAccessor",
     "MapStateMixin",
     "StrongholdGeneratorLibraryMixin",

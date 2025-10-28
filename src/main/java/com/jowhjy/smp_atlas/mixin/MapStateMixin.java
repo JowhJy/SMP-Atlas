@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class MapStateMixin {
 
     @Inject(method = "zoomOut", at = @At("TAIL"), cancellable = true)
-    public void juhc$upgradeZoomingYay(CallbackInfoReturnable<MapState> cir)
+    public void smp_atlas$upgradeZoomingYay(CallbackInfoReturnable<MapState> cir)
     {
         MapState result = cir.getReturnValue();
         MapStateHelper.transferContentsToZoomed((MapState) (Object) this, result);
