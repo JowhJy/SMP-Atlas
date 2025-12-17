@@ -1,43 +1,50 @@
 package com.jowhjy.smp_atlas.mixin;
 
 import com.jowhjy.smp_atlas.IStructurePieceMixin;
-import net.minecraft.block.*;
-import net.minecraft.loot.LootTables;
-import net.minecraft.structure.*;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockBox;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.random.Random;
-import net.minecraft.world.ServerWorldAccess;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.ServerLevelAccessor;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.TemplateStructurePiece;
+import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceType;
+import net.minecraft.world.level.levelgen.structure.structures.WoodlandMansionPieces;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+import net.minecraft.world.level.storage.loot.BuiltInLootTables;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(WoodlandMansionGenerator.Piece.class)
-public abstract class WoodlandMansionGenerator$PieceMixin extends SimpleStructurePiece {
-    public WoodlandMansionGenerator$PieceMixin(StructurePieceType type, int length, StructureTemplateManager structureTemplateManager, Identifier id, String template, StructurePlacementData placementData, BlockPos pos) {
-        super(type, length, structureTemplateManager, id, template, placementData, pos);
+@Mixin(WoodlandMansionPieces.WoodlandMansionPiece.class)
+public abstract class WoodlandMansionGenerator$PieceMixin extends TemplateStructurePiece {
+
+    public WoodlandMansionGenerator$PieceMixin(StructurePieceType structurePieceType, int i, StructureTemplateManager structureTemplateManager, Identifier identifier, String string, StructurePlaceSettings structurePlaceSettings, BlockPos blockPos) {
+        super(structurePieceType, i, structureTemplateManager, identifier, string, structurePlaceSettings, blockPos);
     }
 
-    @Inject(at = @At("HEAD"), method = "handleMetadata")
-    public void smp_atlas$handleBookshelfMetadata(String metadata, BlockPos pos, ServerWorldAccess world, Random random, BlockBox boundingBox, CallbackInfo ci) {
+    @Inject(at = @At("HEAD"), method = "handleDataMarker")
+    public void smp_atlas$handleBookshelfMetadata(String metadata, BlockPos pos, ServerLevelAccessor world, RandomSource random, BoundingBox boundingBox, CallbackInfo ci) {
         if (metadata.startsWith("MapAtlasBookshelf")) {
-            BlockRotation blockRotation = this.placementData.getRotation();
-            BlockState blockState = Blocks.CHISELED_BOOKSHELF.getDefaultState();
+            Rotation blockRotation = this.placeSettings.getRotation();
+            BlockState blockState = Blocks.CHISELED_BOOKSHELF.defaultBlockState();
             if ("MapAtlasBookshelfWest".equals(metadata)) {
-                blockState = blockState.with(HorizontalFacingBlock.FACING, blockRotation.rotate(Direction.WEST));
+                blockState = blockState.setValue(HorizontalDirectionalBlock.FACING, blockRotation.rotate(Direction.WEST));
             } else if ("MapAtlasBookshelfEast".equals(metadata)) {
-                blockState = blockState.with(HorizontalFacingBlock.FACING, blockRotation.rotate(Direction.EAST));
+                blockState = blockState.setValue(HorizontalDirectionalBlock.FACING, blockRotation.rotate(Direction.EAST));
             } else if ("MapAtlasBookshelfSouth".equals(metadata)) {
-                blockState = blockState.with(HorizontalFacingBlock.FACING, blockRotation.rotate(Direction.SOUTH));
+                blockState = blockState.setValue(HorizontalDirectionalBlock.FACING, blockRotation.rotate(Direction.SOUTH));
             } else if ("MapAtlasBookshelfNorth".equals(metadata)) {
-                blockState = blockState.with(HorizontalFacingBlock.FACING, blockRotation.rotate(Direction.NORTH));
+                blockState = blockState.setValue(HorizontalDirectionalBlock.FACING, blockRotation.rotate(Direction.NORTH));
             }
 
-            ((IStructurePieceMixin)this).smp_atlas$addChiseledBookshelf(world, boundingBox, random, pos, LootTables.WOODLAND_MANSION_CHEST, blockState);
+            ((IStructurePieceMixin)this).smp_atlas$addChiseledBookshelf(world, boundingBox, random, pos, BuiltInLootTables.WOODLAND_MANSION, blockState);
         }
     }
 }

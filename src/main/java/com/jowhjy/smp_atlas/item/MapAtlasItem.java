@@ -5,31 +5,48 @@ import com.jowhjy.smp_atlas.AtlasInfo;
 import com.jowhjy.smp_atlas.MapStateHelper;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.*;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.inventory.StackReference;
-import net.minecraft.item.*;
-import net.minecraft.item.map.MapState;
-import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.network.packet.s2c.play.MapUpdateS2CPacket;
-import net.minecraft.registry.*;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.screen.slot.Slot;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.*;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.GlobalPos;
-import net.minecraft.world.World;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.SlotAccess;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ClickAction;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.MapItem;
+import net.minecraft.world.item.Rarity;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.item.component.MapPostProcessing;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.saveddata.maps.MapId;
+import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
 import xyz.nucleoid.packettweaker.PacketContext;
@@ -42,58 +59,58 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public static final int MAX_MAPS = 64;
     public static final int MAX_OFFSET = 5;
 
-    public MapAtlasItem(Settings settings) {
+    public MapAtlasItem(Properties settings) {
         super(settings);
     }
 
     public static Item register() {
-        Identifier id = Identifier.of("smp_atlas", "map_atlas");
-        RegistryKey<Item> key = RegistryKey.of(RegistryKeys.ITEM, id);
+        Identifier id = Identifier.fromNamespaceAndPath("smp_atlas", "map_atlas");
+        ResourceKey<Item> key = ResourceKey.create(Registries.ITEM, id);
 
-        Item.Settings settings = new Item.Settings().registryKey(key).maxCount(1).rarity(Rarity.UNCOMMON);
+        Item.Properties settings = new Item.Properties().setId(key).stacksTo(1).rarity(Rarity.UNCOMMON);
 
-        return Registry.register(Registries.ITEM, key, new MapAtlasItem(settings));
+        return Registry.register(BuiltInRegistries.ITEM, key, new MapAtlasItem(settings));
     }
 
     @Override
-    public ActionResult use(World world, PlayerEntity user, Hand hand) {
-        if (user instanceof ServerPlayerEntity player) {
-            ItemStack stack = user.getStackInHand(hand);
+    public InteractionResult use(Level world, Player user, InteractionHand hand) {
+        if (user instanceof ServerPlayer player) {
+            ItemStack stack = user.getItemInHand(hand);
             //use while sneaking: change offset
-            if (player.getPlayerInput().sneak()) {
+            if (player.getLastClientInput().shift()) {
                 ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
                 Vector2i oldMapOffsetAsVector = new Vector2i(oldMapOffset.x, oldMapOffset.z);
                 Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
-                if (player.getPlayerInput().forward()) {
+                if (player.getLastClientInput().forward()) {
                     mapOffset.y = Math.max(mapOffset.y - 1, -MAX_OFFSET);
                 }
-                if (player.getPlayerInput().backward()) {
+                if (player.getLastClientInput().backward()) {
                     mapOffset.y = Math.min(mapOffset.y + 1, MAX_OFFSET);
                 }
-                if (player.getPlayerInput().left()) {
+                if (player.getLastClientInput().left()) {
                     mapOffset.x = Math.max(mapOffset.x - 1, -MAX_OFFSET);
                 }
-                if (player.getPlayerInput().right()) {
+                if (player.getLastClientInput().right()) {
                     mapOffset.x = Math.min(mapOffset.x + 1, MAX_OFFSET);
                 }
-                MutableText offsetMessage = Text.translatable("atlas.smp_atlas.offset");
+                MutableComponent offsetMessage = Component.translatable("atlas.smp_atlas.offset");
                 if (mapOffset.y > 0) offsetMessage.append(" ↓" + mapOffset.y);
                 else if (mapOffset.y < 0) offsetMessage.append(" ↑" + -mapOffset.y);
                 if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
                 else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
                 else if (mapOffset.y == 0) offsetMessage.append(" 0");
-                user.sendMessage(offsetMessage, true);
+                user.displayClientMessage(offsetMessage, true);
                 if (!mapOffset.equals(oldMapOffsetAsVector)) {
                     setOffset(stack, mapOffset);
-                    return ActionResult.SUCCESS;
+                    return InteractionResult.SUCCESS;
                 }
             }
             //use if no current map and not sneaking: make new map
-            else if (stack.get(DataComponentTypes.MAP_ID) == null) {
-                tryMakeNewMap(stack, (ServerWorld) world, player);
+            else if (stack.get(DataComponents.MAP_ID) == null) {
+                tryMakeNewMap(stack, (ServerLevel) world, player);
             }
         }
-        return ActionResult.PASS;
+        return InteractionResult.PASS;
     }
 
 
@@ -103,14 +120,14 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipType tooltipType, PacketContext context) {
+    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipFlag tooltipType, PacketContext context) {
         ItemStack out = PolymerItemUtils.createItemStack(itemStack, context);
-        itemStack.copyComponentsToNewStack(out.getItem(), itemStack.getCount());
-        out.set(DataComponentTypes.MAP_ID, new MapIdComponent(getCurrentMapId(itemStack)));
-        out.apply(DataComponentTypes.TOOLTIP_DISPLAY, TooltipDisplayComponent.DEFAULT, comp -> comp.with(DataComponentTypes.MAP_ID, true));
-        List<Text> tooltip = Lists.newArrayList();
-        appendTooltip(itemStack, null, itemStack.get(DataComponentTypes.TOOLTIP_DISPLAY), tooltip::add, TooltipType.ADVANCED); //the given TooltipType is always basic for some reason, polymer doesn't properly get it from the player
-        out.set(DataComponentTypes.LORE, new LoreComponent(tooltip));
+        itemStack.transmuteCopy(out.getItem(), itemStack.getCount());
+        out.set(DataComponents.MAP_ID, new MapId(getCurrentMapId(itemStack)));
+        out.update(DataComponents.TOOLTIP_DISPLAY, TooltipDisplay.DEFAULT, comp -> comp.withHidden(DataComponents.MAP_ID, true));
+        List<Component> tooltip = Lists.newArrayList();
+        appendHoverText(itemStack, null, itemStack.get(DataComponents.TOOLTIP_DISPLAY), tooltip::add, TooltipFlag.ADVANCED); //the given TooltipType is always basic for some reason, polymer doesn't properly get it from the player
+        out.set(DataComponents.LORE, new ItemLore(tooltip));
         return out;
     }
 
@@ -119,85 +136,85 @@ public class MapAtlasItem extends Item implements PolymerItem {
         return PolymerItem.super.getPolymerItemModel(stack, context);
     }
 
-    public Optional<Pair<MapState, MapIdComponent>> getMapWithPlayer(ServerPlayerEntity player, ItemStack stack) {
+    public Optional<Tuple<MapItemSavedData, MapId>> getMapWithPlayer(ServerPlayer player, ItemStack stack) {
         AtlasInfo atlasInfo = getAtlasInfo(stack);
         byte scale = atlasInfo.scale();
         ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0, 0));
         if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
-        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.getChunkPos().x, (mapOffset.z * (8 << scale)) + player.getChunkPos().z);
+        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.chunkPosition().x, (mapOffset.z * (8 << scale)) + player.chunkPosition().z);
         Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
-        MapState currentMapState = getCurrentMapState(stack, player.getEntityWorld());
+        MapItemSavedData currentMapState = getCurrentMapState(stack, player.level());
 
         //if the player is still in the same map region (unlike map state this does also work for uncharted areas!) and world then we don't check any further
-        if (currentMapState != null && isMapTheSame(stack, requiredCenterPos, player.getEntityWorld().getRegistryKey())) {
-            return Optional.of(new Pair<>(currentMapState, stack.get(DataComponentTypes.MAP_ID)));
+        if (currentMapState != null && isMapTheSame(stack, requiredCenterPos, player.level().dimension())) {
+            return Optional.of(new Tuple<>(currentMapState, stack.get(DataComponents.MAP_ID)));
         }
 
-        atlasInfo = new AtlasInfo.Builder(atlasInfo).withCurrentMapInfo(requiredCenterPos, player.getEntityWorld().getRegistryKey()).build();
+        atlasInfo = new AtlasInfo.Builder(atlasInfo).withCurrentMapInfo(requiredCenterPos, player.level().dimension()).build();
         setAtlasInfo(stack, atlasInfo);
 
         var mapLocations = getAtlasInfo(stack).mapLocations();
 
-        var requiredGlobalPos = new GlobalPos(player.getEntityWorld().getRegistryKey(), new BlockPos(requiredCenterPos.x, 0, requiredCenterPos.y));
+        var requiredGlobalPos = new GlobalPos(player.level().dimension(), new BlockPos(requiredCenterPos.x, 0, requiredCenterPos.y));
 
 
         Integer map_id = mapLocations.get(requiredGlobalPos);
 
         if (map_id != null) {
-            MapIdComponent comp = new MapIdComponent(map_id);
-            MapState mapState = FilledMapItem.getMapState(comp, player.getEntityWorld());
+            MapId comp = new MapId(map_id);
+            MapItemSavedData mapState = MapItem.getSavedData(comp, player.level());
             setAtlasInfo(stack, new AtlasInfo.Builder(atlasInfo).moveToFront(map_id).build());
-            return Optional.of(new Pair<>(mapState, comp));
+            return Optional.of(new Tuple<>(mapState, comp));
         }
 
         return Optional.empty();
     }
 
-    public boolean isMapTheSame(ItemStack stack, @Nullable Vector2i requiredCenterPos, @Nullable RegistryKey<World> requiredWorld)
+    public boolean isMapTheSame(ItemStack stack, @Nullable Vector2i requiredCenterPos, @Nullable ResourceKey<Level> requiredWorld)
     {
         return requiredCenterPos != null && requiredWorld != null
                 && Objects.equals(getCurrentMapCenter(stack),requiredCenterPos) && getCurrentMapWorld(stack) == requiredWorld;
     }
 
     @Override
-    public void inventoryTick(ItemStack stack, ServerWorld world, Entity entity, @Nullable EquipmentSlot slot)
+    public void inventoryTick(ItemStack stack, ServerLevel world, Entity entity, @Nullable EquipmentSlot slot)
     {
-        if (entity instanceof ServerPlayerEntity player && (slot == EquipmentSlot.MAINHAND || player.getOffHandStack().equals(stack)) && !world.isClient())
+        if (entity instanceof ServerPlayer player && (slot == EquipmentSlot.MAINHAND || player.getOffhandItem().equals(stack)) && !world.isClientSide())
         {
             AtlasInfo atlasInfo = getAtlasInfo(stack);
 
             //if there is an offset but player is no longer sneaking, remove offset
-            if (!player.getPlayerInput().sneak() && atlasInfo.offset().isPresent()) {
+            if (!player.getLastClientInput().shift() && atlasInfo.offset().isPresent()) {
 
                 clearOffset(stack);
-                player.sendMessage(Text.translatable("atlas.smp_atlas.offset").append(" 0"),true);
+                player.displayClientMessage(Component.translatable("atlas.smp_atlas.offset").append(" 0"),true);
             }
 
-            var prevMapID = stack.get(DataComponentTypes.MAP_ID);
-            Optional<Pair<MapState, MapIdComponent>> currentMap = getMapWithPlayer(player, stack);
+            var prevMapID = stack.get(DataComponents.MAP_ID);
+            Optional<Tuple<MapItemSavedData, MapId>> currentMap = getMapWithPlayer(player, stack);
 
             //is there a map with the player? update it. otherwise remove map id component (is spammed)
             currentMap.ifPresentOrElse(pair -> {
-                        pair.getLeft().update(player, stack);
-                        MapStateHelper.updateColors(world, entity, pair.getLeft());
+                        pair.getA().tickCarriedBy(player, stack);
+                        MapStateHelper.updateColors(world, entity, pair.getA());
                     },
-                    () -> stack.remove(DataComponentTypes.MAP_ID));
+                    () -> stack.remove(DataComponents.MAP_ID));
 
             //if there is a map with the player but it does not equal the existing map id component, we switched maps and should change map id component
-            if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getRight()))) {
-                stack.set(DataComponentTypes.MAP_ID, currentMap.get().getRight());
-                world.playSound(null, player.getBlockPos(), SoundEvents.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 1, 1);
+            if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getB()))) {
+                stack.set(DataComponents.MAP_ID, currentMap.get().getB());
+                world.playSound(null, player.blockPosition(), SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, 1, 1);
             }
             //if no current map, we show the question mark map
             else if (currentMap.isEmpty()) {
-                MapState unknownMapState = world.getMapState(new MapIdComponent(-1));
+                MapItemSavedData unknownMapState = world.getMapData(new MapId(-1));
                 //TODO would be nice if the mod initialized the unknown map by itself!
-                if (unknownMapState != null) player.networkHandler.sendPacket(new MapUpdateS2CPacket(new MapIdComponent(-1), (byte)0, true, List.of(), new MapState.UpdateData(0,0,128,128, unknownMapState.colors)));
+                if (unknownMapState != null) player.connection.send(new ClientboundMapItemDataPacket(new MapId(-1), (byte)0, true, List.of(), new MapItemSavedData.MapPatch(0,0,128,128, unknownMapState.colors)));
             }
         }
     }
 
-    public void tryMakeNewMap(ItemStack stack, ServerWorld world, ServerPlayerEntity entity)
+    public void tryMakeNewMap(ItemStack stack, ServerLevel world, ServerPlayer entity)
     {
         AtlasInfo oldAtlasInfo = getAtlasInfo(stack);
 
@@ -211,21 +228,21 @@ public class MapAtlasItem extends Item implements PolymerItem {
             }
 
             setEmptyMaps(stack,emptyMaps - 1);
-            ItemStack newMapStack = FilledMapItem.createMap(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
-            this.tryAddMap(newMapStack.get(DataComponentTypes.MAP_ID), world, stack, getScale(stack));
+            ItemStack newMapStack = MapItem.create(world, entity.getBlockX(), entity.getBlockZ(), getScale(stack), true, false);
+            this.tryAddMap(newMapStack.get(DataComponents.MAP_ID), world, stack, getScale(stack));
         }
         else playInsertFailSound(entity);
     }
 
     public static AtlasInfo getAtlasInfo(ItemStack stack)
     {
-        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA,NbtComponent.DEFAULT).copyNbt().get("atlas_info", AtlasInfo.CODEC).orElse(AtlasInfo.DEFAULT);
+        return stack.getOrDefault(DataComponents.CUSTOM_DATA,CustomData.EMPTY).copyTag().read("atlas_info", AtlasInfo.CODEC).orElse(AtlasInfo.DEFAULT);
     }
     public static void setAtlasInfo(ItemStack stack, AtlasInfo atlasInfo) {
-        stack.apply(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT, comp -> comp.apply(nbt -> nbt.put("atlas_info",AtlasInfo.CODEC, atlasInfo)));
+        stack.update(DataComponents.CUSTOM_DATA, CustomData.EMPTY, comp -> comp.update(nbt -> nbt.store("atlas_info",AtlasInfo.CODEC, atlasInfo)));
     }
 
-    public void tryAddMap(MapIdComponent mapIdComponent, World world, ItemStack stack, byte scale) {
+    public void tryAddMap(MapId mapIdComponent, Level world, ItemStack stack, byte scale) {
 
         if (mapIdComponent == null) return;
 
@@ -233,11 +250,11 @@ public class MapAtlasItem extends Item implements PolymerItem {
         if (oldAtlasInfo.scale() == -1 ||  // any scale is fine if it was unset previously
             oldAtlasInfo.scale() == scale) { //otherwise you can only add maps of the correct scale
 
-            MapState mapState = FilledMapItem.getMapState(mapIdComponent, world);
+            MapItemSavedData mapState = MapItem.getSavedData(mapIdComponent, world);
             setAtlasInfo(stack, new AtlasInfo.Builder(oldAtlasInfo).withScale(scale).addMap(mapIdComponent.id(), mapState).build()); //update the info to the new list and possibly new scale
         }
 
-        stack.remove(DataComponentTypes.MAP_ID);
+        stack.remove(DataComponents.MAP_ID);
 
     }
 
@@ -253,31 +270,31 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void onCraft(ItemStack stack, World world) {
-        MapIdComponent mapIdComponent = stack.remove(DataComponentTypes.MAP_ID);
-        MapPostProcessingComponent mapPostProcessingComponent = stack.remove(DataComponentTypes.MAP_POST_PROCESSING);
+    public void onCraftedPostProcess(ItemStack stack, Level world) {
+        MapId mapIdComponent = stack.remove(DataComponents.MAP_ID);
+        MapPostProcessing mapPostProcessingComponent = stack.remove(DataComponents.MAP_POST_PROCESSING);
 
         if (mapIdComponent != null) {
-            MapState state = FilledMapItem.getMapState(mapIdComponent, world);
+            MapItemSavedData state = MapItem.getSavedData(mapIdComponent, world);
             if (state != null) ((MapAtlasItem) stack.getItem()).tryAddMap(mapIdComponent, world, stack, state.scale);
-            stack.remove(DataComponentTypes.MAP_ID);
+            stack.remove(DataComponents.MAP_ID);
         }
-        if (mapPostProcessingComponent == MapPostProcessingComponent.SCALE)
+        if (mapPostProcessingComponent == MapPostProcessing.SCALE)
         {
             ((MapAtlasItem) stack.getItem()).addEmptyMap(stack);
         }
     }
 
     @Override
-    public boolean onStackClicked(ItemStack stack, Slot slot, ClickType clickType, PlayerEntity player) {
-        ItemStack otherStack = slot.getStack();
-        if (clickType == ClickType.LEFT && !otherStack.isEmpty()) {
-            if (otherStack.isOf(Items.FILLED_MAP)) {
-                if (canAdd(stack, otherStack, player.getEntityWorld())) {
-                    MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
-                    MapState state = FilledMapItem.getMapState(mapIdComponent, player.getEntityWorld());
-                    tryAddMap(mapIdComponent, player.getEntityWorld(), stack, Objects.requireNonNull(state).scale);
-                    otherStack.decrement(1);
+    public boolean overrideStackedOnOther(ItemStack stack, Slot slot, ClickAction clickType, Player player) {
+        ItemStack otherStack = slot.getItem();
+        if (clickType == ClickAction.PRIMARY && !otherStack.isEmpty()) {
+            if (otherStack.is(Items.FILLED_MAP)) {
+                if (canAdd(stack, otherStack, player.level())) {
+                    MapId mapIdComponent = otherStack.get(DataComponents.MAP_ID);
+                    MapItemSavedData state = MapItem.getSavedData(mapIdComponent, player.level());
+                    tryAddMap(mapIdComponent, player.level(), stack, Objects.requireNonNull(state).scale);
+                    otherStack.shrink(1);
                     playInsertSound(player);
                 }
                 else {
@@ -286,16 +303,16 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 return true;
             }
 
-            if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
+            if (otherStack.is(Items.MAP) && canAddEmpty(stack)) {
                 addEmptyMap(stack);
-                otherStack.decrement(1);
+                otherStack.shrink(1);
                 return true;
             }
             return true;
-        } else if (clickType == ClickType.RIGHT && otherStack.isEmpty()) {
-            ItemStack topMapStack = removeTopMap(stack, player.getEntityWorld());
+        } else if (clickType == ClickAction.SECONDARY && otherStack.isEmpty()) {
+            ItemStack topMapStack = removeTopMap(stack, player.level());
             if (topMapStack != null) {
-                ItemStack itemStack3 = slot.insertStack(topMapStack);
+                ItemStack itemStack3 = slot.safeInsert(topMapStack);
                 playRemoveOneSound(player);
             }
             return true;
@@ -306,28 +323,28 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
 
     @Override
-    public boolean onClicked(ItemStack stack, ItemStack otherStack, Slot slot, ClickType clickType, PlayerEntity player, StackReference cursorStackReference) {
-        if (clickType == ClickType.LEFT && otherStack.isEmpty()) return false;
+    public boolean overrideOtherStackedOnMe(ItemStack stack, ItemStack otherStack, Slot slot, ClickAction clickType, Player player, SlotAccess cursorStackReference) {
+        if (clickType == ClickAction.PRIMARY && otherStack.isEmpty()) return false;
 
-        if (clickType == ClickType.LEFT) {
-            if (otherStack.isOf(Items.FILLED_MAP)) {
-                if (canAdd(stack, otherStack, player.getEntityWorld())) {
-                    MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
-                    MapState state = FilledMapItem.getMapState(mapIdComponent, player.getEntityWorld());
-                    tryAddMap(mapIdComponent, player.getEntityWorld(), stack, Objects.requireNonNull(state).scale);
-                    otherStack.decrement(1);
+        if (clickType == ClickAction.PRIMARY) {
+            if (otherStack.is(Items.FILLED_MAP)) {
+                if (canAdd(stack, otherStack, player.level())) {
+                    MapId mapIdComponent = otherStack.get(DataComponents.MAP_ID);
+                    MapItemSavedData state = MapItem.getSavedData(mapIdComponent, player.level());
+                    tryAddMap(mapIdComponent, player.level(), stack, Objects.requireNonNull(state).scale);
+                    otherStack.shrink(1);
                     playInsertSound(player);
                 } else playInsertFailSound(player);
                 return true;
             }
-            if (otherStack.isOf(Items.MAP) && canAddEmpty(stack)) {
+            if (otherStack.is(Items.MAP) && canAddEmpty(stack)) {
                 addEmptyMap(stack);
-                otherStack.decrement(1);
+                otherStack.shrink(1);
                 return true;
             }
-        } else if (clickType == ClickType.RIGHT && otherStack.isEmpty()) {
-            if (slot.canTakePartial(player)) {
-                ItemStack itemStack = removeTopMap(stack, player.getEntityWorld());
+        } else if (clickType == ClickAction.SECONDARY && otherStack.isEmpty()) {
+            if (slot.allowModification(player)) {
+                ItemStack itemStack = removeTopMap(stack, player.level());
                 if (itemStack != null) {
                     playRemoveOneSound(player);
                     cursorStackReference.set(itemStack);
@@ -345,10 +362,10 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Nullable
-    private ItemStack removeTopMap(ItemStack stack, World world) {
+    private ItemStack removeTopMap(ItemStack stack, Level world) {
         int mapID = getCurrentMapId(stack);
         if (mapID != -1) { //if the top map was a map currently being showed, we stop showing anything
-            stack.remove(DataComponentTypes.MAP_ID);
+            stack.remove(DataComponents.MAP_ID);
         }
         AtlasInfo atlasInfo = getAtlasInfo(stack);
         AtlasInfo.Builder atlasInfoBuilder = new AtlasInfo.Builder(atlasInfo);
@@ -357,14 +374,14 @@ public class MapAtlasItem extends Item implements PolymerItem {
         return result;
     }
 
-    public static boolean canAdd(ItemStack atlasStack, ItemStack otherStack, World world)
+    public static boolean canAdd(ItemStack atlasStack, ItemStack otherStack, Level world)
     {
 
-        MapState mapState = FilledMapItem.getMapState(otherStack, world);
+        MapItemSavedData mapState = MapItem.getSavedData(otherStack, world);
         AtlasInfo atlasInfo = MapAtlasItem.getAtlasInfo(atlasStack);
 
         if (mapState != null && (atlasInfo.scale() == -1 || mapState.scale == atlasInfo.scale())) {
-            MapIdComponent mapIdComponent = otherStack.get(DataComponentTypes.MAP_ID);
+            MapId mapIdComponent = otherStack.get(DataComponents.MAP_ID);
             List<Integer> mapIDs = atlasInfo.mapIDs();
             return mapIdComponent != null && mapIDs.size() + atlasInfo.emptyMaps() < MAX_MAPS && !mapIDs.contains(mapIdComponent.id());
         }
@@ -372,10 +389,10 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void appendTooltip(ItemStack stack, Item.TooltipContext context, TooltipDisplayComponent displayComponent, Consumer<Text> tooltip, TooltipType type) {
+    public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay displayComponent, Consumer<Component> tooltip, TooltipFlag type) {
         AtlasInfo atlasInfo = getAtlasInfo(stack);
 
-        MapPostProcessingComponent mapPostProcessingComponent = stack.get(DataComponentTypes.MAP_POST_PROCESSING);
+        MapPostProcessing mapPostProcessingComponent = stack.get(DataComponents.MAP_POST_PROCESSING);
 
         if (type.isAdvanced()) {
             if (mapPostProcessingComponent == null && !atlasInfo.mapIDs().isEmpty()) {
@@ -383,22 +400,22 @@ public class MapAtlasItem extends Item implements PolymerItem {
             }
 
             int emptyMaps = atlasInfo.emptyMaps();
-            int i = mapPostProcessingComponent == MapPostProcessingComponent.SCALE ? 1 : 0;
-            tooltip.accept((Text.translatable("item.smp_atlas.map_atlas.empty_maps").append(Text.literal(String.valueOf(emptyMaps + i))).formatted(Formatting.GRAY)));
+            int i = mapPostProcessingComponent == MapPostProcessing.SCALE ? 1 : 0;
+            tooltip.accept((Component.translatable("item.smp_atlas.map_atlas.empty_maps").append(Component.literal(String.valueOf(emptyMaps + i))).withStyle(ChatFormatting.GRAY)));
 
             int scale = Math.min(atlasInfo.scale(), 4);
             if (scale != -1) {
-                tooltip.accept(Text.translatable("filled_map.scale", 1 << scale).formatted(Formatting.GRAY));
-                tooltip.accept(Text.translatable("filled_map.level", scale, 4).formatted(Formatting.GRAY));
+                tooltip.accept(Component.translatable("filled_map.scale", 1 << scale).withStyle(ChatFormatting.GRAY));
+                tooltip.accept(Component.translatable("filled_map.level", scale, 4).withStyle(ChatFormatting.GRAY));
             }
             else
             {
-                tooltip.accept(Text.translatable("item.smp_atlas.map_atlas.empty.instructions").formatted(Formatting.GRAY));
+                tooltip.accept(Component.translatable("item.smp_atlas.map_atlas.empty.instructions").withStyle(ChatFormatting.GRAY));
             }
         }
     }
-    public static Text getIdText(List<Integer> ids) {
-        MutableText result = Text.empty();
+    public static Component getIdText(List<Integer> ids) {
+        MutableComponent result = Component.empty();
         int count = 0;
         for (int id : ids) {
             if (count == 5) {
@@ -406,8 +423,8 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 break;
             }
 
-            if (!result.equals(Text.empty())) result.append(Text.literal(", ")).formatted(Formatting.GRAY);
-            result.append(Text.translatable("filled_map.id", id).formatted(Formatting.GRAY));
+            if (!result.equals(Component.empty())) result.append(Component.literal(", ")).withStyle(ChatFormatting.GRAY);
+            result.append(Component.translatable("filled_map.id", id).withStyle(ChatFormatting.GRAY));
             count++;
         }
 
@@ -416,21 +433,21 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
     public static int getCurrentMapId(ItemStack stack)
     {
-        MapIdComponent comp = stack.get(DataComponentTypes.MAP_ID);
+        MapId comp = stack.get(DataComponents.MAP_ID);
         if (comp == null) return -1;
         return comp.id();
     }
 
-    public static MapState getCurrentMapState(ItemStack stack, World world)
+    public static MapItemSavedData getCurrentMapState(ItemStack stack, Level world)
     {
-        return FilledMapItem.getMapState(stack, world);
+        return MapItem.getSavedData(stack, world);
     }
     public static @Nullable Vector2i getCurrentMapCenter(ItemStack stack)
     {
         ChunkPos chunkPosBecauseISuckAtCodex = getAtlasInfo(stack).currentMapCenter().orElse(null);
         return chunkPosBecauseISuckAtCodex == null ? null : new Vector2i(chunkPosBecauseISuckAtCodex.x, chunkPosBecauseISuckAtCodex.z);
     }
-    public static @Nullable RegistryKey<World> getCurrentMapWorld(ItemStack stack) {
+    public static @Nullable ResourceKey<Level> getCurrentMapWorld(ItemStack stack) {
         return getAtlasInfo(stack).currentMapWorld().orElse(null);
     }
 
@@ -452,31 +469,31 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     private static void playRemoveOneSound(Entity entity) {
-        entity.getEntityWorld().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.ITEM_BUNDLE_REMOVE_ONE, entity.getSoundCategory(), 0.8F, 0.8F + entity.getEntityWorld().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_REMOVE_ONE, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     private static void playInsertSound(Entity entity) {
-        entity.getEntityWorld().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.ITEM_BUNDLE_INSERT, entity.getSoundCategory(), 0.8F, 0.8F + entity.getEntityWorld().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_INSERT, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     private static void playInsertFailSound(Entity entity) {
-        entity.getEntityWorld().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.ITEM_BUNDLE_INSERT_FAIL, entity.getSoundCategory(), 0.8F, 0.8F + entity.getEntityWorld().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_INSERT_FAIL, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     private static void playDropContentsSound(Entity entity) {
-        entity.getEntityWorld().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.ITEM_BUNDLE_DROP_CONTENTS, entity.getSoundCategory(), 0.8F, 0.8F + entity.getEntityWorld().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_DROP_CONTENTS, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     @Override
-    public ActionResult useOnBlock(ItemUsageContext context) {
-        BlockState blockState = context.getWorld().getBlockState(context.getBlockPos());
-        if (blockState.isIn(BlockTags.BANNERS)) {
-            MapState mapState;
-            if (!context.getWorld().isClient() && (mapState = FilledMapItem.getMapState(context.getStack(), context.getWorld())) != null && !mapState.addBanner(context.getWorld(), context.getBlockPos())) {
-                return ActionResult.FAIL;
+    public InteractionResult useOn(UseOnContext context) {
+        BlockState blockState = context.getLevel().getBlockState(context.getClickedPos());
+        if (blockState.is(BlockTags.BANNERS)) {
+            MapItemSavedData mapState;
+            if (!context.getLevel().isClientSide() && (mapState = MapItem.getSavedData(context.getItemInHand(), context.getLevel())) != null && !mapState.toggleBanner(context.getLevel(), context.getClickedPos())) {
+                return InteractionResult.FAIL;
             }
-            return ActionResult.SUCCESS;
+            return InteractionResult.SUCCESS;
         }
-        return super.useOnBlock(context);
+        return super.useOn(context);
     }
 }

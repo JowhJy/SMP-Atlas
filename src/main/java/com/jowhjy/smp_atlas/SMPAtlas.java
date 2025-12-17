@@ -4,8 +4,8 @@ import com.jowhjy.smp_atlas.item.MapAtlasItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemGroups;
+import net.minecraft.world.item.CreativeModeTabs;
+import net.minecraft.world.item.Item;
 
 public class SMPAtlas implements ModInitializer {
 
@@ -15,8 +15,8 @@ public class SMPAtlas implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS)
-                        .register((itemGroup) -> itemGroup.add(MAP_ATLAS));
+        ItemGroupEvents.modifyEntriesEvent(CreativeModeTabs.TOOLS_AND_UTILITIES)
+                        .register((itemGroup) -> itemGroup.accept(MAP_ATLAS));
 
         //polymer resource pack
         PolymerResourcePackUtils.addModAssets(MOD_ID);
