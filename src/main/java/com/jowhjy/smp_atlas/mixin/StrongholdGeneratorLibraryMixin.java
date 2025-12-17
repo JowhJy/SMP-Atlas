@@ -42,8 +42,8 @@ public abstract class StrongholdGeneratorLibraryMixin extends StructurePiece {
         int x = 1, y = 7, z = 7;
         BlockPos pos = offsetPos(x,y,z);
         //debug
-        var DEBUG = world.getBlockState(pos);
-        System.out.println(DEBUG + " at " + pos);
+        //var DEBUG = world.getBlockState(pos);
+        //System.out.println(DEBUG + " at " + pos);
         if (boundingBox.contains(pos) && !world.getBlockState(pos).isOf(Blocks.CHISELED_BOOKSHELF)) {
             BlockState state = orientateChest(world, pos, Blocks.CHISELED_BOOKSHELF.getDefaultState());
             world.setBlockState(pos, state, Block.NOTIFY_LISTENERS);
