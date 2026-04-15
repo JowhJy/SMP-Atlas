@@ -5,9 +5,11 @@ import com.jowhjy.smp_atlas.AtlasInfo;
 import com.jowhjy.smp_atlas.MapStateHelper;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
+import net.fabricmc.fabric.api.networking.v1.context.PacketContext;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.Registry;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -49,7 +51,7 @@ import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
-import xyz.nucleoid.packettweaker.PacketContext;
+import org.jspecify.annotations.NonNull;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -73,14 +75,14 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public InteractionResult use(Level world, Player user, InteractionHand hand) {
+    public @NonNull InteractionResult use(@NonNull Level world, @NonNull Player user, @NonNull InteractionHand hand) {
         if (user instanceof ServerPlayer player) {
             ItemStack stack = user.getItemInHand(hand);
             //use while sneaking: change offset
             if (player.getLastClientInput().shift()) {
                 ChunkPos oldMapOffset = getAtlasInfo(stack).offset().orElse(new ChunkPos(0,0));
-                Vector2i oldMapOffsetAsVector = new Vector2i(oldMapOffset.x, oldMapOffset.z);
-                Vector2i mapOffset = new Vector2i(oldMapOffset.x, oldMapOffset.z);
+                Vector2i oldMapOffsetAsVector = new Vector2i(oldMapOffset.x(), oldMapOffset.z());
+                Vector2i mapOffset = new Vector2i(oldMapOffset.x(), oldMapOffset.z());
                 if (player.getLastClientInput().forward()) {
                     mapOffset.y = Math.max(mapOffset.y - 1, -MAX_OFFSET);
                 }
@@ -99,7 +101,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
                 if (mapOffset.x > 0) offsetMessage.append(" →" + mapOffset.x);
                 else if (mapOffset.x < 0) offsetMessage.append(" ←" + -mapOffset.x);
                 else if (mapOffset.y == 0) offsetMessage.append(" 0");
-                user.displayClientMessage(offsetMessage, true);
+                user.sendOverlayMessage(offsetMessage);
                 if (!mapOffset.equals(oldMapOffsetAsVector)) {
                     setOffset(stack, mapOffset);
                     return InteractionResult.SUCCESS;
@@ -120,8 +122,8 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipFlag tooltipType, PacketContext context) {
-        ItemStack out = PolymerItemUtils.createItemStack(itemStack, context);
+    public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipFlag tooltipType, PacketContext context, HolderLookup.Provider lookup) {
+        ItemStack out = PolymerItemUtils.createItemStack(itemStack, context, lookup);
         itemStack.transmuteCopy(out.getItem(), itemStack.getCount());
         out.set(DataComponents.MAP_ID, new MapId(getCurrentMapId(itemStack)));
         out.update(DataComponents.TOOLTIP_DISPLAY, TooltipDisplay.DEFAULT, comp -> comp.withHidden(DataComponents.MAP_ID, true));
@@ -132,8 +134,8 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public @Nullable Identifier getPolymerItemModel(ItemStack stack, PacketContext context) {
-        return PolymerItem.super.getPolymerItemModel(stack, context);
+    public @Nullable Identifier getPolymerItemModel(ItemStack stack, PacketContext context, HolderLookup.Provider lookup) {
+        return PolymerItem.super.getPolymerItemModel(stack, context, lookup);
     }
 
     public Optional<Tuple<MapItemSavedData, MapId>> getMapWithPlayer(ServerPlayer player, ItemStack stack) {
@@ -141,7 +143,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
         byte scale = atlasInfo.scale();
         ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0, 0));
         if (scale == -1) return Optional.empty(); //in this case there are always 0 maps in the atlas
-        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x * (8 << scale)) + player.chunkPosition().x, (mapOffset.z * (8 << scale)) + player.chunkPosition().z);
+        ChunkPos requiredMapPos = new ChunkPos((mapOffset.x() * (8 << scale)) + player.chunkPosition().x(), (mapOffset.z() * (8 << scale)) + player.chunkPosition().z());
         Vector2i requiredCenterPos = MapStateHelper.getMapCenterForPosAndScale(requiredMapPos, scale);
         MapItemSavedData currentMapState = getCurrentMapState(stack, player.level());
 
@@ -177,7 +179,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void inventoryTick(ItemStack stack, ServerLevel world, Entity entity, @Nullable EquipmentSlot slot)
+    public void inventoryTick(@NonNull ItemStack stack, @NonNull ServerLevel world, @NonNull Entity entity, @Nullable EquipmentSlot slot)
     {
         if (entity instanceof ServerPlayer player && (slot == EquipmentSlot.MAINHAND || player.getOffhandItem().equals(stack)) && !world.isClientSide())
         {
@@ -187,7 +189,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             if (!player.getLastClientInput().shift() && atlasInfo.offset().isPresent()) {
 
                 clearOffset(stack);
-                player.displayClientMessage(Component.translatable("atlas.smp_atlas.offset").append(" 0"),true);
+                player.sendOverlayMessage(Component.translatable("atlas.smp_atlas.offset").append(" 0"));
             }
 
             var prevMapID = stack.get(DataComponents.MAP_ID);
@@ -195,7 +197,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
             //is there a map with the player? update it. otherwise remove map id component (is spammed)
             currentMap.ifPresentOrElse(pair -> {
-                        pair.getA().tickCarriedBy(player, stack);
+                        pair.getA().tickCarriedBy(player, stack, null);
                         MapStateHelper.updateColors(world, entity, pair.getA());
                     },
                     () -> stack.remove(DataComponents.MAP_ID));
@@ -270,7 +272,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void onCraftedPostProcess(ItemStack stack, Level world) {
+    public void onCraftedPostProcess(ItemStack stack, @NonNull Level world) {
         MapId mapIdComponent = stack.remove(DataComponents.MAP_ID);
         MapPostProcessing mapPostProcessingComponent = stack.remove(DataComponents.MAP_POST_PROCESSING);
 
@@ -286,7 +288,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public boolean overrideStackedOnOther(ItemStack stack, Slot slot, ClickAction clickType, Player player) {
+    public boolean overrideStackedOnOther(@NonNull ItemStack stack, Slot slot, @NonNull ClickAction clickType, @NonNull Player player) {
         ItemStack otherStack = slot.getItem();
         if (clickType == ClickAction.PRIMARY && !otherStack.isEmpty()) {
             if (otherStack.is(Items.FILLED_MAP)) {
@@ -323,7 +325,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
 
     @Override
-    public boolean overrideOtherStackedOnMe(ItemStack stack, ItemStack otherStack, Slot slot, ClickAction clickType, Player player, SlotAccess cursorStackReference) {
+    public boolean overrideOtherStackedOnMe(ItemStack stack, @NonNull ItemStack otherStack, @NonNull Slot slot, @NonNull ClickAction clickType, @NonNull Player player, @NonNull SlotAccess cursorStackReference) {
         if (clickType == ClickAction.PRIMARY && otherStack.isEmpty()) return false;
 
         if (clickType == ClickAction.PRIMARY) {
@@ -389,7 +391,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay displayComponent, Consumer<Component> tooltip, TooltipFlag type) {
+    public void appendHoverText(@NonNull ItemStack stack, Item.@NonNull TooltipContext context, @NonNull TooltipDisplay displayComponent, @NonNull Consumer<Component> tooltip, TooltipFlag type) {
         AtlasInfo atlasInfo = getAtlasInfo(stack);
 
         MapPostProcessing mapPostProcessingComponent = stack.get(DataComponents.MAP_POST_PROCESSING);
@@ -445,7 +447,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     public static @Nullable Vector2i getCurrentMapCenter(ItemStack stack)
     {
         ChunkPos chunkPosBecauseISuckAtCodex = getAtlasInfo(stack).currentMapCenter().orElse(null);
-        return chunkPosBecauseISuckAtCodex == null ? null : new Vector2i(chunkPosBecauseISuckAtCodex.x, chunkPosBecauseISuckAtCodex.z);
+        return chunkPosBecauseISuckAtCodex == null ? null : new Vector2i(chunkPosBecauseISuckAtCodex.x(), chunkPosBecauseISuckAtCodex.z());
     }
     public static @Nullable ResourceKey<Level> getCurrentMapWorld(ItemStack stack) {
         return getAtlasInfo(stack).currentMapWorld().orElse(null);
@@ -485,7 +487,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Override
-    public InteractionResult useOn(UseOnContext context) {
+    public @NonNull InteractionResult useOn(UseOnContext context) {
         BlockState blockState = context.getLevel().getBlockState(context.getClickedPos());
         if (blockState.is(BlockTags.BANNERS)) {
             MapItemSavedData mapState;

@@ -55,8 +55,8 @@ public class MapStateHelper {
         int scale = 1 << mapState.scale;
         int cx = mapState.centerX / 16;
         int cy = mapState.centerZ / 16;
-        int l = Mth.floor(pos.x - (double)cx) / scale + 4;
-        int m = Mth.floor(pos.z - (double)cy) / scale + 4;
+        int l = Mth.floor(pos.x() - (double)cx) / scale + 4;
+        int m = Mth.floor(pos.z() - (double)cy) / scale + 4;
         return (0 <= l && l < 8 && 0 <= m && m < 8);
     }
 
@@ -72,8 +72,8 @@ public class MapStateHelper {
     {
         //ripped from mojang again because I am incapable of math right now
         int i = 8 * (1 << scale);
-        int j = Mth.floor((pos.x + 4.0) / (double)i);
-        int k = Mth.floor((pos.z + 4.0) / (double)i);
+        int j = Mth.floor((pos.x() + 4.0) / (double)i);
+        int k = Mth.floor((pos.z() + 4.0) / (double)i);
         int l = j * i + i / 2 - 4;
         int m = k * i + i / 2 - 4;
         return new Vector2i(l * 16, m * 16);

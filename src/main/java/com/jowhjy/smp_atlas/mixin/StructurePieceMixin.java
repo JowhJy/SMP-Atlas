@@ -28,9 +28,9 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Mixin(StructurePiece.class)
 public class StructurePieceMixin implements IStructurePieceMixin {
 
-    @Redirect(method = "reorient", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/BlockState;isOf(Lnet/minecraft/world/level/block/Block;)Z"))
-    private static boolean smp_atlas$isOfCheckChange(BlockState instance, Block block, @Local(ordinal = 0, argsOnly = true) BlockState state) {
-        return state.getBlock().equals(instance.getBlock());
+    @Redirect(method = "reorient", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/BlockState;is(Ljava/lang/Object;)Z"))
+    private static boolean smp_atlas$isOfCheckChange(BlockState instance, Object o, @Local(ordinal = 0, argsOnly = true) BlockState blockState) {
+        return blockState.getBlock().equals(instance.getBlock());
     }
 
     @Unique
