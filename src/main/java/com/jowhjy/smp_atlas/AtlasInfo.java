@@ -115,7 +115,10 @@ public record AtlasInfo(List<Integer> mapIDs, int emptyMaps, byte scale, Optiona
             MapItemSavedData state = world.getMapData(comp);
             if (state == null) return null;
             GlobalPos posKey = new GlobalPos(state.dimension, new BlockPos(state.centerX, 0, state.centerZ));
-            mapLocations.remove(posKey);
+            if (mapLocations.remove(posKey) == null) {
+                SMPAtlas.LOGGER.error("Failed to remove map from atlas because its center position was not found! Removing by value...");
+                mapLocations.values().remove(mapID);
+            }
 
             return result;
         }

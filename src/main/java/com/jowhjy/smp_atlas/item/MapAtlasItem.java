@@ -3,6 +3,7 @@ package com.jowhjy.smp_atlas.item;
 import com.google.common.collect.Lists;
 import com.jowhjy.smp_atlas.AtlasInfo;
 import com.jowhjy.smp_atlas.MapStateHelper;
+import com.jowhjy.smp_atlas.SMPAtlas;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import eu.pb4.polymer.core.api.item.PolymerItemUtils;
 import net.fabricmc.fabric.api.networking.v1.context.PacketContext;
@@ -24,7 +25,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
-import net.minecraft.util.*;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -52,6 +52,7 @@ import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
 import org.jspecify.annotations.NonNull;
+import oshi.util.tuples.Pair;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -138,7 +139,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
         return PolymerItem.super.getPolymerItemModel(stack, context, lookup);
     }
 
-    public Optional<Tuple<MapItemSavedData, MapId>> getMapWithPlayer(ServerPlayer player, ItemStack stack) {
+    public Optional<Pair<MapItemSavedData, MapId>> getMapWithPlayer(ServerPlayer player, ItemStack stack) {
         AtlasInfo atlasInfo = getAtlasInfo(stack);
         byte scale = atlasInfo.scale();
         ChunkPos mapOffset = atlasInfo.offset().orElse(new ChunkPos(0, 0));
@@ -149,7 +150,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
         //if the player is still in the same map region (unlike map state this does also work for uncharted areas!) and world then we don't check any further
         if (currentMapState != null && isMapTheSame(stack, requiredCenterPos, player.level().dimension())) {
-            return Optional.of(new Tuple<>(currentMapState, stack.get(DataComponents.MAP_ID)));
+            return Optional.of(new Pair<>(currentMapState, stack.get(DataComponents.MAP_ID)));
         }
 
         atlasInfo = new AtlasInfo.Builder(atlasInfo).withCurrentMapInfo(requiredCenterPos, player.level().dimension()).build();
@@ -166,7 +167,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             MapId comp = new MapId(map_id);
             MapItemSavedData mapState = MapItem.getSavedData(comp, player.level());
             setAtlasInfo(stack, new AtlasInfo.Builder(atlasInfo).moveToFront(map_id).build());
-            return Optional.of(new Tuple<>(mapState, comp));
+            return Optional.of(new Pair<>(mapState, comp));
         }
 
         return Optional.empty();
@@ -193,7 +194,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             }
 
             var prevMapID = stack.get(DataComponents.MAP_ID);
-            Optional<Tuple<MapItemSavedData, MapId>> currentMap = getMapWithPlayer(player, stack);
+            Optional<Pair<MapItemSavedData, MapId>> currentMap = getMapWithPlayer(player, stack);
 
             //is there a map with the player? update it. otherwise remove map id component (is spammed)
             currentMap.ifPresentOrElse(pair -> {
@@ -202,16 +203,14 @@ public class MapAtlasItem extends Item implements PolymerItem {
                     },
                     () -> stack.remove(DataComponents.MAP_ID));
 
-            //if there is a map with the player but it does not equal the existing map id component, we switched maps and should change map id component
+            //if there is a map with the player, but it does not equal the existing map id component, we switched maps and should change map id component
             if (currentMap.isPresent() && (!Objects.equals(prevMapID, currentMap.get().getB()))) {
                 stack.set(DataComponents.MAP_ID, currentMap.get().getB());
                 world.playSound(null, player.blockPosition(), SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, 1, 1);
             }
             //if no current map, we show the question mark map
             else if (currentMap.isEmpty()) {
-                MapItemSavedData unknownMapState = world.getMapData(new MapId(-1));
-                //TODO would be nice if the mod initialized the unknown map by itself!
-                if (unknownMapState != null) player.connection.send(new ClientboundMapItemDataPacket(new MapId(-1), (byte)0, true, List.of(), new MapItemSavedData.MapPatch(0,0,128,128, unknownMapState.colors)));
+                if (SMPAtlas.UNKNOWN_MAP_DATA != null) player.connection.send(new ClientboundMapItemDataPacket(new MapId(-1), (byte)0, true, List.of(), new MapItemSavedData.MapPatch(0,0,128,128, SMPAtlas.UNKNOWN_MAP_DATA.colors)));
             }
         }
     }
@@ -308,13 +307,14 @@ public class MapAtlasItem extends Item implements PolymerItem {
             if (otherStack.is(Items.MAP) && canAddEmpty(stack)) {
                 addEmptyMap(stack);
                 otherStack.shrink(1);
+                playInsertSound(player);
                 return true;
             }
             return true;
         } else if (clickType == ClickAction.SECONDARY && otherStack.isEmpty()) {
             ItemStack topMapStack = removeTopMap(stack, player.level());
             if (topMapStack != null) {
-                ItemStack itemStack3 = slot.safeInsert(topMapStack);
+                slot.safeInsert(topMapStack);
                 playRemoveOneSound(player);
             }
             return true;
@@ -325,7 +325,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
 
 
     @Override
-    public boolean overrideOtherStackedOnMe(ItemStack stack, @NonNull ItemStack otherStack, @NonNull Slot slot, @NonNull ClickAction clickType, @NonNull Player player, @NonNull SlotAccess cursorStackReference) {
+    public boolean overrideOtherStackedOnMe(@NonNull ItemStack stack, @NonNull ItemStack otherStack, @NonNull Slot slot, @NonNull ClickAction clickType, @NonNull Player player, @NonNull SlotAccess cursorStackReference) {
         if (clickType == ClickAction.PRIMARY && otherStack.isEmpty()) return false;
 
         if (clickType == ClickAction.PRIMARY) {
@@ -342,6 +342,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
             if (otherStack.is(Items.MAP) && canAddEmpty(stack)) {
                 addEmptyMap(stack);
                 otherStack.shrink(1);
+                playInsertSound(player);
                 return true;
             }
         } else if (clickType == ClickAction.SECONDARY && otherStack.isEmpty()) {
@@ -364,7 +365,7 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     @Nullable
-    private ItemStack removeTopMap(ItemStack stack, Level world) {
+    private static ItemStack removeTopMap(ItemStack stack, Level world) {
         int mapID = getCurrentMapId(stack);
         if (mapID != -1) { //if the top map was a map currently being showed, we stop showing anything
             stack.remove(DataComponents.MAP_ID);
@@ -471,20 +472,21 @@ public class MapAtlasItem extends Item implements PolymerItem {
     }
 
     private static void playRemoveOneSound(Entity entity) {
-        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_REMOVE_ONE, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.blockPosition(), SoundEvents.BUNDLE_REMOVE_ONE, SoundSource.PLAYERS, 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     private static void playInsertSound(Entity entity) {
-        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_INSERT, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.blockPosition(), SoundEvents.BUNDLE_INSERT, SoundSource.PLAYERS, 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
     }
 
     private static void playInsertFailSound(Entity entity) {
-        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_INSERT_FAIL, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
+        entity.level().playSound(null, entity.blockPosition(), SoundEvents.BUNDLE_INSERT_FAIL, SoundSource.PLAYERS, 1.0F, 1.0F);
     }
 
-    private static void playDropContentsSound(Entity entity) {
-        entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(), SoundEvents.BUNDLE_DROP_CONTENTS, entity.getSoundSource(), 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F);
-    }
+    private static void playDropContentsSound(final Level level, Entity entity) {
+        level.playSound(
+                null, entity.blockPosition(), SoundEvents.BUNDLE_DROP_CONTENTS, SoundSource.PLAYERS, 0.8F, 0.8F + entity.level().getRandom().nextFloat() * 0.4F
+        );    }
 
     @Override
     public @NonNull InteractionResult useOn(UseOnContext context) {

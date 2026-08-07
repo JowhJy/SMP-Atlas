@@ -1,1 +1,7 @@
 /.gradle/
+/.idea/
+/gradlew
+/build
+/run
+/SMP Atlas_client.launch
+/SMP Atlas_server.launch
