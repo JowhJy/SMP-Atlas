@@ -20,19 +20,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class FilledMapItemMixin {
 
     @Inject(method = "onCraftedPostProcess", at = @At("HEAD"))
-    public void smp_atlas$mapPostProcessingExpansionForMergesAndSplits(ItemStack stack, Level world, CallbackInfo ci)
+    public void smp_atlas$mapPostProcessingExpansionForMergesAndSplits(ItemStack itemStack, Level level, CallbackInfo ci)
     {
-        if (!(world instanceof ServerLevel serverWorld)) return;
+        if (!(level instanceof ServerLevel serverWorld)) return;
 
-        CustomData comp = stack.get(DataComponents.CUSTOM_DATA);
+        CustomData comp = itemStack.get(DataComponents.CUSTOM_DATA);
         if (comp == null) return;
         CompoundTag nbtCompound = comp.copyTag(); //take the custom nbt from comp
         if (nbtCompound.contains("to_merge_with_id")) {
             int id = nbtCompound.getInt("to_merge_with_id").get();
             nbtCompound.remove("to_merge_with_id");
 
-            MapItemSavedData thisMapState = MapItem.getSavedData(stack, world);
-            MapItemSavedData otherMapState = MapItem.getSavedData(new MapId(id), world);
+            MapItemSavedData thisMapState = MapItem.getSavedData(itemStack, level);
+            MapItemSavedData otherMapState = MapItem.getSavedData(new MapId(id), level);
 
             if (thisMapState != null && otherMapState != null) {
                 MapStateHelper.mergeMaps(thisMapState, otherMapState);
@@ -44,14 +44,14 @@ public class FilledMapItemMixin {
             int atZ = toZoomCompound.getInt("chunkZ").get();
             nbtCompound.remove("to_zoom_in");
 
-            MapItemSavedData thisMapState = MapItem.getSavedData(stack, world);
+            MapItemSavedData thisMapState = MapItem.getSavedData(itemStack, level);
             if (thisMapState != null) {
                 MapId newMapID = serverWorld.getFreeMapId();
                 serverWorld.setMapData(newMapID, MapStateHelper.zoomIn(thisMapState, new ChunkPos(atX, atZ)));
-                stack.set(DataComponents.MAP_ID, newMapID);
+                itemStack.set(DataComponents.MAP_ID, newMapID);
             }
         }
-        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(nbtCompound)); //put the (possibly changed) custom nbt back in new comp
+        itemStack.set(DataComponents.CUSTOM_DATA, CustomData.of(nbtCompound)); //put the (possibly changed) custom nbt back in new comp
 
     }
 }

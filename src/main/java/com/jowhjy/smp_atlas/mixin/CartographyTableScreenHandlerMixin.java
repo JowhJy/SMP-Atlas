@@ -17,6 +17,7 @@ import net.minecraft.world.item.component.MapPostProcessing;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+import org.jspecify.annotations.NonNull;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -38,7 +39,7 @@ public class CartographyTableScreenHandlerMixin {
 
         return new Slot(((CartographyTableMenu)(Object)this).container, 0, 15, 15) {
             @Override
-            public boolean mayPlace(ItemStack stack) {
+            public boolean mayPlace(@NonNull ItemStack stack) {
                 return stack.is(Items.FILLED_MAP) || stack.is(SMPAtlas.MAP_ATLAS);
             }
         };
@@ -49,7 +50,7 @@ public class CartographyTableScreenHandlerMixin {
 
         return new Slot(((CartographyTableMenu)(Object)this).container, 1, 15, 52) {
             @Override
-            public boolean mayPlace(ItemStack stack) {
+            public boolean mayPlace(@NonNull ItemStack stack) {
                 return stack.is(Items.PAPER) || stack.is(Items.MAP) || stack.is(Items.GLASS_PANE) || stack.is(Items.SHEARS) || stack.is(Items.FILLED_MAP);
             }
         };
